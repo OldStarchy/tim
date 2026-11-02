@@ -36,8 +36,8 @@ describe('levels', () => {
         }
       });
 
-      it('references valid part ids', () => {
-        const ids = new Set([...level.scene.parts, ...level.solution.parts].map((p) => p.id));
+      it('goals only reference parts the level places (player parts get fresh ids)', () => {
+        const ids = new Set(level.scene.parts.map((p) => p.id));
         for (const p of level.scene.parts) expect(PART_DEFS[p.type]).toBeTruthy();
         for (const g of level.goals) {
           const refs = g.kind === 'toppled' ? g.targets : g.kind === 'inBucket' ? [g.target, g.bucket] : [g.target];
