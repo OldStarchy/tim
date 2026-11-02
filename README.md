@@ -11,7 +11,7 @@ trampolines and teeter-totters onto the board, press **Start**, and watch the co
 - 15 parts: bowling ball, basketball, baseball, balloon, crate, domino, bucket, brick wall,
   conveyor belt, trampoline, teeter-totter, pin, fan, hook, pulley, and ropes (with or without a pulley)
 - Modern controls TIM never had:
-  - **Trajectory preview** — ghost paths update live while you edit
+  - **Trajectory preview** in Free Build — ghost paths update live while you edit (off in puzzles, it'd give them away)
   - Undo / redo, grid snap (hold <kbd>Alt</kbd> to ignore), duplicate, arrow-key nudging
   - Drag handles to rotate and resize, or <kbd>Q</kbd>/<kbd>E</kbd> and <kbd>-</kbd>/<kbd>=</kbd>
   - Pause, frame-step and ¼×–4× speed while running

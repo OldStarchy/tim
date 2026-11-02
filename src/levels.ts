@@ -45,7 +45,7 @@ export const LEVELS: Level[] = [
     id: 'boing',
     title: 'Boing!',
     blurb: 'The basketball needs to clear the wall and land in the bucket.',
-    hint: 'A tilted trampoline launches things sideways. Turn on the trajectory preview (T) to aim.',
+    hint: 'A tilted trampoline launches things sideways. Try a few angles: Reset puts everything back.',
     scene: {
       parts: [
         floor(),
@@ -57,7 +57,7 @@ export const LEVELS: Level[] = [
     },
     bin: { trampoline: 1, wall: 1 },
     goals: [{ kind: 'inBucket', target: 'ball', bucket: 'bucket', label: 'Basketball in the bucket' }],
-    solution: { parts: [S('trampoline', 5, 18, 's1', { angle: 0.4 })], ropes: [] },
+    solution: { parts: [S('trampoline', 5, 14, 's1', { angle: 0.3 })], ropes: [] },
   },
   {
     id: 'breeze-pop',

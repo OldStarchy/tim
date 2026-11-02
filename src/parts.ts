@@ -520,7 +520,10 @@ const conveyor: PartDef = {
   },
 };
 
-export const TRAMP_MIN_BOUNCE = 13;
+/** outgoing speed along the mat normal = incoming × GAIN, clamped to [MIN, MAX] */
+export const TRAMP_GAIN = 1.15;
+export const TRAMP_MIN_BOUNCE = 14;
+export const TRAMP_MAX_BOUNCE = 28;
 const trampoline: PartDef = {
   type: 'trampoline',
   name: 'Trampoline',

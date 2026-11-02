@@ -11,6 +11,8 @@ import {
   Inst,
   PART_DEFS,
   PULLEY_R,
+  TRAMP_GAIN,
+  TRAMP_MAX_BOUNCE,
   TRAMP_MIN_BOUNCE,
   inBucket,
 } from './parts';
@@ -56,7 +58,7 @@ export class Sim {
   steps = 0;
   events: SimEvent[] = [];
   popped = new Set<string>();
-  private trampHits: { body: Body; inst: Inst }[] = [];
+  private trampHits: { body: Body; inst: Inst; vin: number }[] = [];
   private toPop = new Set<Inst>();
   private impactCooldown = new WeakMap<Body, number>();
 
@@ -152,8 +154,8 @@ export class Sim {
     if (fa.isSensor() || fb.isSensor()) return;
     if (ta.role === 'balloon' && tb.role === 'sharp') this.toPop.add(ta.inst);
     if (tb.role === 'balloon' && ta.role === 'sharp') this.toPop.add(tb.inst);
-    if (ta.role === 'tramp' && fb.getBody().isDynamic()) this.trampHits.push({ body: fb.getBody(), inst: ta.inst });
-    if (tb.role === 'tramp' && fa.getBody().isDynamic()) this.trampHits.push({ body: fa.getBody(), inst: tb.inst });
+    if (ta.role === 'tramp' && fb.getBody().isDynamic()) this.trampHit(fb.getBody(), ta.inst);
+    if (tb.role === 'tramp' && fa.getBody().isDynamic()) this.trampHit(fa.getBody(), tb.inst);
 
     // sound-worthy impacts
     const ba = fa.getBody();
@@ -169,6 +171,13 @@ export class Sim {
         this.events.push({ kind: 'impact', x: p.x, y: p.y, speed: rel, material: mover.inst.part.type });
       }
     }
+  }
+
+  /** called before the solver runs, so this is the approach speed into the mat */
+  private trampHit(body: Body, inst: Inst) {
+    const n = inst.main.getWorldVector(Vec2(0, -1));
+    const vin = -Vec2.dot(body.getLinearVelocity(), n);
+    if (vin > 0.5) this.trampHits.push({ body, inst, vin });
   }
 
   step() {
@@ -187,13 +196,12 @@ export class Sim {
     this.time += DT;
     this.steps++;
 
-    for (const { body, inst } of this.trampHits) {
+    // trampoline: throw things back harder than they arrived (capped so nothing runs away)
+    for (const { body, inst, vin } of this.trampHits) {
       const n = inst.main.getWorldVector(Vec2(0, -1));
       const v = body.getLinearVelocity();
-      const vn = Vec2.dot(v, n);
-      if (vn < TRAMP_MIN_BOUNCE) {
-        body.setLinearVelocity(Vec2.add(v, Vec2.mul(n, TRAMP_MIN_BOUNCE - vn)));
-      }
+      const vout = Math.min(TRAMP_MAX_BOUNCE, Math.max(TRAMP_MIN_BOUNCE, vin * TRAMP_GAIN));
+      body.setLinearVelocity(Vec2.add(v, Vec2.mul(n, vout - Vec2.dot(v, n))));
       const p = body.getPosition();
       this.events.push({ kind: 'boing', x: p.x, y: p.y });
     }

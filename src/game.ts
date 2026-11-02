@@ -149,6 +149,11 @@ export class Game {
     this.updateUI();
   }
 
+  /** trajectory preview would give puzzles away, so it's a Free Build tool */
+  get previewOn() {
+    return this.ghost && this.sandbox;
+  }
+
   get sandbox() {
     return this.level === null;
   }
@@ -301,9 +306,9 @@ export class Game {
   // ---------------------------------------------------------------- ghost preview
 
   private advanceGhost() {
-    if (this.mode !== 'edit' || !this.ghost) {
+    if (this.mode !== 'edit' || !this.previewOn) {
       this.ghostJob = null;
-      if (!this.ghost) this.trails = [];
+      if (!this.previewOn) this.trails = [];
       return;
     }
     if (this.ghostDirty && !this.drag) {
@@ -396,7 +401,7 @@ export class Game {
     drawBoard(g);
     const simT = this.mode === 'run' ? this.sim.time : this.wallTime * 0.15;
     if (this.level) drawGoalMarkers(g, this.sim, this.level.goals, this.wallTime);
-    if (this.mode === 'edit' && this.ghost) drawTrails(g, this.trails);
+    if (this.mode === 'edit' && this.previewOn) drawTrails(g, this.trails);
     const order = this.scene.parts.map((p) => p.id);
     drawParts(g, this.sim, simT, order);
     drawRopes(g, this.sim.ropes, this.selectedRope ?? undefined);
@@ -954,6 +959,10 @@ export class Game {
   }
 
   toggleGhost() {
+    if (!this.sandbox) {
+      this.toast('Trajectory preview is only available in Free Build');
+      return;
+    }
     this.ghost = !this.ghost;
     this.ghostDirty = true;
     this.savePrefs();
@@ -1114,6 +1123,7 @@ export class Game {
     $('btn-snap').classList.toggle('on', this.snap);
     $('btn-music').classList.toggle('on', music.isPlaying());
     $('btn-ghost').classList.toggle('on', this.ghost);
+    $('btn-ghost').classList.toggle('hidden', !this.sandbox);
     ($('btn-undo') as HTMLButtonElement).disabled = !this.undoStack.length;
     ($('btn-redo') as HTMLButtonElement).disabled = !this.redoStack.length;
     $('btn-sound').textContent = audio.isMuted() ? '🔇' : '🔊';
@@ -1231,7 +1241,7 @@ export class Game {
         <dt><kbd>Del</kbd></dt><dd>Remove selected part or rope</dd>
         <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></dt><dd>Undo / redo</dd>
         <dt><kbd>G</kbd></dt><dd>Toggle grid snap (hold <kbd>Alt</kbd> while dragging to ignore it)</dd>
-        <dt><kbd>T</kbd></dt><dd>Toggle trajectory preview</dd>
+        <dt><kbd>T</kbd></dt><dd>Toggle trajectory preview (Free Build)</dd>
       </dl>
       <h3>Running</h3>
       <dl class="keys">
