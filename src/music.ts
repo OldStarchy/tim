@@ -10,7 +10,11 @@ export interface Track {
 }
 
 /** add more tracks here (files go in public/music/) */
-export const TRACKS: Track[] = [{ file: 'workshop.mp3', title: 'Rube Goldberg Workshop' }];
+export const TRACKS: Track[] = [
+  { file: 'workshop.mp3', title: 'Rube Goldberg Workshop' },
+  { file: 'pixel-puzzle.mp3', title: 'Pixel Puzzle' },
+  { file: 'clockwork-workshop.mp3', title: 'Clockwork Workshop' },
+];
 
 const CROSSFADE = 4;
 const BUILD_CUTOFF = 1100;
