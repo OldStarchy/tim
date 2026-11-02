@@ -481,13 +481,18 @@ const conveyor: PartDef = {
       g.save();
       rrect(g, -L / 2 + 0.05, -CONV_T + 0.05, L - 0.1, CONV_T * 2 - 0.1, CONV_T);
       g.clip();
-      const off = ((t * CONVEYOR_SPEED * dir) % 0.5 + 0.5) % 0.5;
+      // it's a loop: the top runs one way, the underside comes back the other
+      const wrap = (v: number) => ((v % 0.5) + 0.5) % 0.5;
+      const topOff = wrap(t * CONVEYOR_SPEED * dir);
+      const botOff = wrap(-t * CONVEYOR_SPEED * dir);
       g.strokeStyle = '#4fd1b6';
       g.lineWidth = 0.05;
       g.beginPath();
-      for (let x = -L / 2 - 0.5 + off; x < L / 2 + 0.5; x += 0.5) {
+      for (let x = -L / 2 - 0.5 + topOff; x < L / 2 + 0.5; x += 0.5) {
         g.moveTo(x - 0.06 * dir, -CONV_T);
         g.lineTo(x + 0.06 * dir, -CONV_T + 0.1);
+      }
+      for (let x = -L / 2 - 0.5 + botOff; x < L / 2 + 0.5; x += 0.5) {
         g.moveTo(x + 0.06 * dir, CONV_T);
         g.lineTo(x - 0.06 * dir, CONV_T - 0.1);
       }
