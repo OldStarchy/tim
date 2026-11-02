@@ -40,7 +40,10 @@
         </div>
         <button id="btn-run" class="primary" title="Start / reset (Space)">▶ Start</button>
         <button id="btn-sound" class="icon" title="Sound">🔊</button>
-        <button id="btn-music" class="icon hidden" title="Music">♪</button>
+        <div class="group music">
+          <button id="btn-music" class="icon toggle" title="Music">♪</button>
+          <input id="music-vol" type="range" min="0" max="1" step="0.05" title="Music volume" />
+        </div>
         <button id="btn-share" class="hidden" title="Copy a link to this contraption">Share</button>
         <button id="btn-help" class="icon" title="Controls (H)">?</button>
       </header>

@@ -1,4 +1,4 @@
-// Tiny synthesized sound effects (no assets needed) + optional music loop.
+// Tiny synthesized sound effects (no assets needed). Music lives in music.ts.
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -6,13 +6,13 @@ let muted = false;
 let lastPlay = 0;
 let voices = 0;
 
-function ac(): AudioContext | null {
-  if (muted) return null;
+/** shared AudioContext (created lazily; browsers only let it run after a user gesture) */
+export function context(): AudioContext | null {
   if (!ctx) {
     try {
       ctx = new AudioContext();
       master = ctx.createGain();
-      master.gain.value = 0.35;
+      master.gain.value = muted ? 0 : 0.35;
       master.connect(ctx.destination);
     } catch {
       return null;
@@ -22,10 +22,13 @@ function ac(): AudioContext | null {
   return ctx;
 }
 
+function ac(): AudioContext | null {
+  return muted ? null : context();
+}
+
 export function setMuted(m: boolean) {
   muted = m;
   if (master) master.gain.value = m ? 0 : 0.35;
-  if (music) music.muted = m;
 }
 export function isMuted() {
   return muted;
@@ -150,33 +153,4 @@ export function fanfare() {
       i * 120,
     ),
   );
-}
-
-// ---------- music ----------
-// Drop any .mp3/.ogg at public/music/theme.mp3 and it will be offered in the UI.
-
-let music: HTMLAudioElement | null = null;
-
-export async function musicAvailable(url: string): Promise<boolean> {
-  try {
-    const r = await fetch(url, { method: 'HEAD' });
-    return r.ok && (r.headers.get('content-type') ?? '').startsWith('audio');
-  } catch {
-    return false;
-  }
-}
-
-export function toggleMusic(url: string): boolean {
-  if (!music) {
-    music = new Audio(url);
-    music.loop = true;
-    music.volume = 0.35;
-    music.muted = muted;
-  }
-  if (music.paused) {
-    void music.play();
-    return true;
-  }
-  music.pause();
-  return false;
 }

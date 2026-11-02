@@ -20,6 +20,18 @@ trampolines and teeter-totters onto the board, press **Start**, and watch the co
 
 Press <kbd>H</kbd> in game for the full controls list.
 
+## Music
+
+Tracks live in `public/music/` and are listed in `TRACKS` in `src/music.ts`. They play as a shuffled
+playlist with a 4 s crossfade, so they don't need to loop seamlessly. While you're building, the music
+is muffled and a bit quieter, then opens up when you press Start.
+
+To add a track, normalise it and drop the cover art first:
+
+```sh
+ffmpeg -i in.mp3 -map 0:a -af "loudnorm=I=-20:TP=-2:LRA=7" -ar 44100 -b:a 128k -map_metadata -1 public/music/name.mp3
+```
+
 ## Development
 
 ```sh

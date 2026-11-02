@@ -1,5 +1,6 @@
 import './style.css';
 import { Game } from './game';
+import * as music from './music';
 import { LEVELS } from './levels';
 import { decodeScene, loadProgress } from './storage';
 
@@ -27,4 +28,4 @@ if (shareScene) {
 }
 
 // handy for poking at things from the console
-(window as unknown as { game: Game }).game = game;
+Object.assign(window, { game, music });

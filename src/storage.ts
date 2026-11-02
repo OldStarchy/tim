@@ -23,9 +23,11 @@ export interface Prefs {
   snap: boolean;
   ghost: boolean;
   muted: boolean;
+  music: boolean;
+  musicVolume: number;
 }
 
-export const loadPrefs = (): Prefs => ({ snap: true, ghost: true, muted: false, ...read<Partial<Prefs>>('prefs', {}) });
+export const loadPrefs = (): Prefs => ({ snap: true, ghost: true, muted: false, music: true, musicVolume: 0.5, ...read<Partial<Prefs>>('prefs', {}) });
 export const savePrefs = (p: Prefs) => write('prefs', p);
 
 export const loadProgress = () => read<Record<string, boolean>>('solved', {});

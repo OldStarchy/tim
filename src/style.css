@@ -130,6 +130,10 @@ button.primary.running {
   font-weight: 600;
   margin-left: 6px;
 }
+#music-vol {
+  width: 72px;
+  accent-color: var(--teal);
+}
 #speed {
   min-width: 38px;
   text-align: center;
@@ -429,6 +433,9 @@ main {
   .bin-item {
     flex: none;
     width: 86px;
+  }
+  #music-vol {
+    display: none;
   }
   .brand .sub,
   #level-title small {

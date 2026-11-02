@@ -1,5 +1,6 @@
 import { Vec2 } from 'planck';
 import * as audio from './audio';
+import * as music from './music';
 import { LEVELS } from './levels';
 import { BOARD_H, BOARD_W, Bin, Level, Part, PartType, Rope, Scene, cloneScene, newId } from './model';
 import { BIN_ORDER, PART_DEFS, defaultPart, hitPart } from './parts';
@@ -76,6 +77,7 @@ export class Game {
 
   snap = true;
   ghost = true;
+  musicWanted = true;
   trails: Trail[] = [];
   private ghostJob: { sim: Sim; trails: Map<string, Trail>; steps: number } | null = null;
   private ghostDirty = false;
@@ -91,6 +93,9 @@ export class Game {
     this.snap = prefs.snap;
     this.ghost = prefs.ghost;
     audio.setMuted(prefs.muted);
+    music.setMuted(prefs.muted);
+    music.setVolume(prefs.musicVolume);
+    this.musicWanted = prefs.music;
 
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement!);
     this.resize();
@@ -199,12 +204,14 @@ export class Game {
     this.ghostJob = null;
     this.rebuild();
     this.updateUI();
+    music.setRunning(true);
     audio.click();
   }
 
   stop() {
     if (this.mode === 'edit') return;
     this.mode = 'edit';
+    music.setRunning(false);
     this.particles = [];
     this.rebuild();
     this.updateUI();
@@ -960,7 +967,13 @@ export class Game {
   }
 
   private savePrefs() {
-    store.savePrefs({ snap: this.snap, ghost: this.ghost, muted: audio.isMuted() });
+    store.savePrefs({
+      snap: this.snap,
+      ghost: this.ghost,
+      muted: audio.isMuted(),
+      music: this.musicWanted,
+      musicVolume: music.getVolume(),
+    });
   }
 
   // ---------------------------------------------------------------- UI
@@ -985,6 +998,7 @@ export class Game {
     $('btn-menu').onclick = () => this.showMenu();
     $('btn-sound').onclick = () => {
       audio.setMuted(!audio.isMuted());
+      music.setMuted(audio.isMuted());
       this.savePrefs();
       this.updateUI();
     };
@@ -996,13 +1010,36 @@ export class Game {
       );
       history.replaceState(null, '', url);
     };
-    const musicUrl = `${import.meta.env.BASE_URL}music/theme.mp3`;
-    void audio.musicAvailable(musicUrl).then((ok) => {
-      if (!ok) return;
-      const b = $('btn-music');
-      b.classList.remove('hidden');
-      b.onclick = () => b.classList.toggle('on', audio.toggleMusic(musicUrl));
-    });
+    // music can only start after a user gesture, so kick it off on the first one
+    const kick = (e: Event) => {
+      // let the music button's own click handle that case
+      if ((e.target as HTMLElement)?.closest?.('#btn-music')) return;
+      window.removeEventListener('pointerdown', kick);
+      window.removeEventListener('keydown', kick);
+      if (this.musicWanted) music.start();
+      this.updateUI();
+    };
+    window.addEventListener('pointerdown', kick);
+    window.addEventListener('keydown', kick);
+    $('btn-music').onclick = () => {
+      this.musicWanted = !music.isPlaying();
+      if (this.musicWanted) music.start();
+      else music.stop();
+      this.savePrefs();
+      this.updateUI();
+    };
+    const vol = $<HTMLInputElement>('music-vol');
+    vol.value = String(music.getVolume());
+    vol.oninput = () => {
+      music.setVolume(Number(vol.value));
+      if (!music.isPlaying() && Number(vol.value) > 0) {
+        this.musicWanted = true;
+        music.start();
+        this.updateUI();
+      }
+    };
+    vol.onchange = () => this.savePrefs();
+    music.onTrack((t) => ($('btn-music').title = `Music: ${t.title}`));
     $('goals').addEventListener('click', (e) => {
       if ((e.target as HTMLElement).dataset.act === 'hint') {
         this.hintShown = true;
@@ -1075,6 +1112,7 @@ export class Game {
     $('btn-pause').textContent = this.paused ? '▶' : '❚❚';
     $('speed').textContent = `${SPEEDS[this.speedIdx]}×`;
     $('btn-snap').classList.toggle('on', this.snap);
+    $('btn-music').classList.toggle('on', music.isPlaying());
     $('btn-ghost').classList.toggle('on', this.ghost);
     ($('btn-undo') as HTMLButtonElement).disabled = !this.undoStack.length;
     ($('btn-redo') as HTMLButtonElement).disabled = !this.redoStack.length;
