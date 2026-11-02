@@ -1,29 +1,28 @@
 import { Body, Contact, Joint, PulleyJoint, RopeJoint, Vec2, World } from 'planck';
-import type { Goal, Part, Rope, Scene } from './model';
+import type { Belt, Goal, Part, Rope, Scene } from './model';
 import { BOARD_H, BOARD_W } from './model';
 import {
   BALLOON_LIFT,
-  CONVEYOR_SPEED,
   FAN_HALF_H,
   FAN_RANGE,
   FAN_STRENGTH,
-  FixtureTag,
-  Inst,
+  type Inst,
   PART_DEFS,
   PULLEY_R,
+  type SimApi,
+  type SimEvent,
   TRAMP_GAIN,
   TRAMP_MAX_BOUNCE,
   TRAMP_MIN_BOUNCE,
   inBucket,
 } from './parts';
+import { BUMPER_KICK, shatter } from './parts-more';
+import { tagOf } from './partkit';
+
+export type { SimEvent } from './parts';
 
 export const GRAVITY = 25;
 export const DT = 1 / 120;
-
-export type SimEvent =
-  | { kind: 'pop'; x: number; y: number }
-  | { kind: 'impact'; x: number; y: number; speed: number; material: string }
-  | { kind: 'boing'; x: number; y: number };
 
 export interface RopeInst {
   rope: Rope;
@@ -32,16 +31,44 @@ export interface RopeInst {
   via?: Inst;
   joint: Joint | null;
   length: number;
+  cut: boolean;
 }
 
-function tagOf(f: { getUserData(): unknown }): FixtureTag | undefined {
-  return f.getUserData() as FixtureTag | undefined;
+export interface BeltInst {
+  belt: Belt;
+  a: Inst;
+  b: Inst;
 }
 
-export function ropeAnchorWorld(inst: Inst) {
-  const def = PART_DEFS[inst.part.type];
-  const a = def.ropeAnchor ? def.ropeAnchor(inst.part) : { x: 0, y: 0 };
+function anchorsOf(p: Part) {
+  return PART_DEFS[p.type].ropeAnchors?.(p) ?? [{ x: 0, y: 0 }];
+}
+
+export function ropeAnchorLocal(p: Part, end = 0) {
+  const list = anchorsOf(p);
+  return list[Math.min(end, list.length - 1)];
+}
+
+export function ropeAnchorWorld(inst: Inst, end = 0) {
+  const a = ropeAnchorLocal(inst.part, end);
   return inst.main.getWorldPoint(Vec2(a.x, a.y));
+}
+
+/** world position + radius of one of a powered part's belt hubs */
+export function driveWorld(p: Part, end = 0) {
+  const list = PART_DEFS[p.type].drives?.(p) ?? [{ x: 0, y: 0, r: 0.3 }];
+  const d = list[Math.min(end, list.length - 1)];
+  const c = Math.cos(p.angle);
+  const s = Math.sin(p.angle);
+  return { x: p.x + d.x * c - d.y * s, y: p.y + d.x * s + d.y * c, r: d.r };
+}
+
+/** do two gears' teeth touch? */
+export function gearsMesh(a: Part, b: Part): boolean {
+  const ra = PART_DEFS[a.type].gearR?.(a);
+  const rb = PART_DEFS[b.type].gearR?.(b);
+  if (!ra || !rb) return false;
+  return Math.abs(Math.hypot(a.x - b.x, a.y - b.y) - (ra + rb)) < 0.35;
 }
 
 /** For a rope over a pulley, which side does each end hang from? */
@@ -50,31 +77,70 @@ export function pulleySides(pulleyX: number, ax: number, bx: number): [number, n
   return ax <= bx ? [pulleyX - PULLEY_R, pulleyX + PULLEY_R] : [pulleyX + PULLEY_R, pulleyX - PULLEY_R];
 }
 
-export class Sim {
+/** the straight pieces a rope is made of right now (for cutting / hit testing) */
+export function ropeSegments(r: RopeInst): [Vec2, Vec2][] {
+  const pa = ropeAnchorWorld(r.a, r.rope.aEnd);
+  const pb = ropeAnchorWorld(r.b, r.rope.bEnd);
+  if (!r.via || r.via.removed) return [[pa, pb]];
+  const v = r.via.main.getPosition();
+  const ax = ropeAnchorWorldX(r.a.part, r.rope.aEnd);
+  const bx = ropeAnchorWorldX(r.b.part, r.rope.bEnd);
+  const [ga, gb] = pulleySides(v.x, ax, bx);
+  return [
+    [pa, Vec2(ga, v.y)],
+    [Vec2(ga, v.y - PULLEY_R), Vec2(gb, v.y - PULLEY_R)],
+    [Vec2(gb, v.y), pb],
+  ];
+}
+
+/** x of a rope anchor at its placed pose (keeps pulley sides stable while things swing) */
+export function ropeAnchorWorldX(p: Part, end = 0) {
+  const l = ropeAnchorLocal(p, end);
+  return p.x + l.x * Math.cos(p.angle) - l.y * Math.sin(p.angle);
+}
+
+function segDist(p: Vec2, a: Vec2, b: Vec2) {
+  const d = Vec2.sub(b, a);
+  const l2 = Vec2.dot(d, d) || 1;
+  const t = Math.max(0, Math.min(1, Vec2.dot(Vec2.sub(p, a), d) / l2));
+  return Vec2.distance(p, Vec2.add(a, Vec2.mul(d, t)));
+}
+
+export class Sim implements SimApi {
   world: World;
   insts = new Map<string, Inst>();
   ropes: RopeInst[] = [];
+  belts: BeltInst[] = [];
   time = 0;
   steps = 0;
   events: SimEvent[] = [];
   popped = new Set<string>();
   private trampHits: { body: Body; inst: Inst; vin: number }[] = [];
+  private bumperHits: { body: Body; inst: Inst }[] = [];
   private toPop = new Set<Inst>();
+  private toRemove = new Set<Inst>();
+  private toCut: { x: number; y: number; r: number }[] = [];
+  private blasts: { x: number; y: number; r: number; power: number; source: Inst }[] = [];
+  private powerDirty = true;
   private impactCooldown = new WeakMap<Body, number>();
 
   constructor(scene: Scene) {
     this.world = new World({ gravity: Vec2(0, GRAVITY) });
     for (const p of scene.parts) this.addPart(p);
     for (const r of scene.ropes) this.addRope(r);
+    for (const b of scene.belts ?? []) this.addBelt(b);
+    this.computePower();
 
     this.world.on('pre-solve', (c: Contact) => this.preSolve(c));
     this.world.on('begin-contact', (c: Contact) => this.beginContact(c));
   }
 
+  // ------------------------------------------------------------------ building
+
   private addPart(p: Part) {
     const def = PART_DEFS[p.type];
     if (!def) return;
-    const inst = { part: p, main: null as unknown as Body, bodies: [], removed: false } as Inst;
+    const inst: Inst = { part: p, main: null as unknown as Body, bodies: [], removed: false, st: {} };
     def.build(this.world, p, inst);
     this.insts.set(p.id, inst);
   }
@@ -82,12 +148,12 @@ export class Sim {
   private addRope(r: Rope) {
     const a = this.insts.get(r.a);
     const b = this.insts.get(r.b);
-    if (!a || !b || a === b) return;
+    if (!a || !b || (a === b && (r.aEnd ?? 0) === (r.bEnd ?? 0))) return;
     const via = r.via ? this.insts.get(r.via) : undefined;
-    const pa = ropeAnchorWorld(a);
-    const pb = ropeAnchorWorld(b);
-    const la = PART_DEFS[a.part.type].ropeAnchor?.(a.part) ?? { x: 0, y: 0 };
-    const lb = PART_DEFS[b.part.type].ropeAnchor?.(b.part) ?? { x: 0, y: 0 };
+    const pa = ropeAnchorWorld(a, r.aEnd);
+    const pb = ropeAnchorWorld(b, r.bEnd);
+    const la = ropeAnchorLocal(a.part, r.aEnd);
+    const lb = ropeAnchorLocal(b.part, r.bEnd);
     let joint: Joint | null = null;
     let length: number;
     const bothStatic = a.main.isStatic() && b.main.isStatic();
@@ -130,19 +196,91 @@ export class Sim {
         );
       }
     }
-    this.ropes.push({ rope: r, a, b, via, joint, length });
+    this.ropes.push({ rope: r, a, b, via, joint, length, cut: false });
   }
+
+  private addBelt(belt: Belt) {
+    const a = this.insts.get(belt.a);
+    const b = this.insts.get(belt.b);
+    if (!a || !b || a === b) return;
+    if (!PART_DEFS[a.part.type].drives || !PART_DEFS[b.part.type].drives) return;
+    this.belts.push({ belt, a, b });
+  }
+
+  // ------------------------------------------------------------------ power
+
+  /** spread angular speed from running sources through belts and meshing gears */
+  private computePower() {
+    this.powerDirty = false;
+    const adj = new Map<Inst, { to: Inst; k: number }[]>();
+    const link = (a: Inst, b: Inst, k: number) => {
+      if (!adj.has(a)) adj.set(a, []);
+      adj.get(a)!.push({ to: b, k });
+    };
+    for (const bi of this.belts) {
+      if (bi.a.removed || bi.b.removed) continue;
+      const ra = driveWorld(bi.a.part, bi.belt.aEnd).r;
+      const rb = driveWorld(bi.b.part, bi.belt.bEnd).r;
+      // a belt keeps rim speed: same direction, ω scales with hub size
+      link(bi.a, bi.b, ra / rb);
+      link(bi.b, bi.a, rb / ra);
+    }
+    const gears = [...this.insts.values()].filter((i) => !i.removed && PART_DEFS[i.part.type].gearR);
+    for (let i = 0; i < gears.length; i++) {
+      for (let j = i + 1; j < gears.length; j++) {
+        const a = gears[i];
+        const b = gears[j];
+        if (!gearsMesh(a.part, b.part)) continue;
+        const ra = PART_DEFS[a.part.type].gearR!(a.part);
+        const rb = PART_DEFS[b.part.type].gearR!(b.part);
+        // meshing teeth reverse direction
+        link(a, b, -ra / rb);
+        link(b, a, -rb / ra);
+      }
+    }
+    const omega = new Map<Inst, number>();
+    const queue: Inst[] = [];
+    for (const inst of this.insts.values()) {
+      const src = PART_DEFS[inst.part.type].source;
+      if (inst.removed || !src) continue;
+      const w = src(inst);
+      if (w !== 0) {
+        omega.set(inst, w);
+        queue.push(inst);
+      }
+    }
+    while (queue.length) {
+      const a = queue.shift()!;
+      for (const { to, k } of adj.get(a) ?? []) {
+        if (omega.has(to)) continue;
+        omega.set(to, omega.get(a)! * k);
+        queue.push(to);
+      }
+    }
+    for (const inst of this.insts.values()) {
+      if (inst.removed) continue;
+      PART_DEFS[inst.part.type].onPower?.(inst, omega.get(inst) ?? 0);
+    }
+  }
+
+  powerChanged() {
+    this.powerDirty = true;
+  }
+
+  // ------------------------------------------------------------------ contacts
 
   private preSolve(c: Contact) {
     const ta = tagOf(c.getFixtureA());
     const tb = tagOf(c.getFixtureB());
+    // glass that is breaking lets the thing that broke it carry on through
+    if ((ta?.role === 'glass' && ta.inst.st.broken) || (tb?.role === 'glass' && tb.inst.st.broken)) {
+      c.setEnabled(false);
+      return;
+    }
     // buckets are padded: things that land inside stay inside
     if (ta?.inst.part.type === 'bucket' || tb?.inst.part.type === 'bucket') c.setRestitution(0.05);
-    if (ta?.role === 'conveyor') {
-      c.setTangentSpeed(ta.inst.part.flip ? CONVEYOR_SPEED : -CONVEYOR_SPEED);
-    } else if (tb?.role === 'conveyor') {
-      c.setTangentSpeed(tb.inst.part.flip ? -CONVEYOR_SPEED : CONVEYOR_SPEED);
-    }
+    if (ta?.role === 'conveyor') c.setTangentSpeed(-((ta.inst.st.speed as number) ?? 0));
+    else if (tb?.role === 'conveyor') c.setTangentSpeed((tb.inst.st.speed as number) ?? 0);
   }
 
   private beginContact(c: Contact) {
@@ -152,15 +290,24 @@ export class Sim {
     const tb = tagOf(fb);
     if (!ta || !tb) return;
     if (fa.isSensor() || fb.isSensor()) return;
-    if (ta.role === 'balloon' && tb.role === 'sharp') this.toPop.add(ta.inst);
-    if (tb.role === 'balloon' && ta.role === 'sharp') this.toPop.add(tb.inst);
-    if (ta.role === 'tramp' && fb.getBody().isDynamic()) this.trampHit(fb.getBody(), ta.inst);
-    if (tb.role === 'tramp' && fa.getBody().isDynamic()) this.trampHit(fa.getBody(), tb.inst);
-
-    // sound-worthy impacts
     const ba = fa.getBody();
     const bb = fb.getBody();
     const rel = Vec2.sub(ba.getLinearVelocity(), bb.getLinearVelocity()).length();
+
+    if (ta.role === 'balloon' && tb.role === 'sharp') this.toPop.add(ta.inst);
+    if (tb.role === 'balloon' && ta.role === 'sharp') this.toPop.add(tb.inst);
+    if (ta.role === 'tramp' && bb.isDynamic()) this.trampHit(bb, ta.inst);
+    if (tb.role === 'tramp' && ba.isDynamic()) this.trampHit(ba, tb.inst);
+    if (ta.role === 'bumper' && bb.isDynamic()) this.bumperHits.push({ body: bb, inst: ta.inst });
+    if (tb.role === 'bumper' && ba.isDynamic()) this.bumperHits.push({ body: ba, inst: tb.inst });
+
+    // part behaviours (triggers, fuses, glass...)
+    if (ta.inst !== tb.inst) {
+      PART_DEFS[ta.inst.part.type].onContact?.(this, ta.inst, ta.role, bb, tb.inst, rel);
+      PART_DEFS[tb.inst.part.type].onContact?.(this, tb.inst, tb.role, ba, ta.inst, rel);
+    }
+
+    // sound-worthy impacts
     if (rel > 3) {
       const loud = ba.isDynamic() ? ba : bb;
       const last = this.impactCooldown.get(loud) ?? -1;
@@ -180,16 +327,38 @@ export class Sim {
     if (vin > 0.5) this.trampHits.push({ body, inst, vin });
   }
 
+  // ------------------------------------------------------------------ SimApi
+
+  emit(e: SimEvent) {
+    this.events.push(e);
+  }
+
+  /** removal is deferred until after the physics step (bodies can't be destroyed mid-step) */
+  remove(inst: Inst) {
+    this.toRemove.add(inst);
+  }
+
+  cutRopesNear(x: number, y: number, r: number): number {
+    this.toCut.push({ x, y, r });
+    return 0;
+  }
+
+  explode(x: number, y: number, r: number, power: number, source: Inst) {
+    this.blasts.push({ x, y, r, power, source });
+  }
+
+  // ------------------------------------------------------------------ stepping
+
   step() {
-    // forces: balloon lift and fans
+    if (this.powerDirty) this.computePower();
+    // forces: balloon lift, fans, part behaviours
     for (const inst of this.insts.values()) {
       if (inst.removed) continue;
       if (inst.part.type === 'balloon' && inst.main.isDynamic()) {
         inst.main.applyForceToCenter(Vec2(0, -BALLOON_LIFT), true);
       }
-    }
-    for (const inst of this.insts.values()) {
       if (inst.part.type === 'fan') this.applyFan(inst);
+      PART_DEFS[inst.part.type].onStep?.(this, inst, DT);
     }
 
     this.world.step(DT, 8, 3);
@@ -207,17 +376,70 @@ export class Sim {
     }
     this.trampHits.length = 0;
 
+    // bumpers kick straight out from their centre
+    for (const { body, inst } of this.bumperHits) {
+      if (inst.removed) continue;
+      const n = Vec2.sub(body.getWorldCenter(), inst.main.getPosition());
+      if (n.length() < 1e-3) continue;
+      n.normalize();
+      const v = body.getLinearVelocity();
+      const vn = Vec2.dot(v, n);
+      if (vn < BUMPER_KICK) body.setLinearVelocity(Vec2.add(v, Vec2.mul(n, BUMPER_KICK - vn)));
+      const p = body.getPosition();
+      this.events.push({ kind: 'boing', x: p.x, y: p.y });
+    }
+    this.bumperHits.length = 0;
+
+    for (const b of this.blasts.splice(0)) this.blast(b);
+    for (const c of this.toCut.splice(0)) this.cutNear(c.x, c.y, c.r);
     for (const inst of this.toPop) this.pop(inst);
     this.toPop.clear();
+    for (const inst of this.toRemove) this.destroy(inst);
+    this.toRemove.clear();
 
     // cull things that left the board
     for (const inst of this.insts.values()) {
       if (inst.removed || !inst.main.isDynamic()) continue;
       const p = inst.main.getPosition();
-      if (p.y > BOARD_H + 8 || p.y < -10 || p.x < -10 || p.x > BOARD_W + 10) {
-        if (inst.part.type === 'seesaw') continue;
-        this.remove(inst);
+      if (p.y > BOARD_H + 8 || p.y < -10 || p.x < -10 || p.x > BOARD_W + 10) this.destroy(inst);
+    }
+  }
+
+  private blast({ x, y, r, power, source }: { x: number; y: number; r: number; power: number; source: Inst }) {
+    this.events.push({ kind: 'boom', x, y });
+    const c = Vec2(x, y);
+    for (const inst of this.insts.values()) {
+      if (inst.removed || inst === source) continue;
+      const d0 = Vec2.distance(inst.main.getWorldCenter(), c);
+      if (d0 < r) {
+        if (inst.part.type === 'balloon') this.toPop.add(inst);
+        if (inst.part.type === 'glass') shatter(this, inst);
+        if (inst.part.type === 'tnt' && inst.st.fuse === undefined) inst.st.fuse = 0.12;
       }
+      for (const b of inst.bodies) {
+        if (!b.isDynamic()) continue;
+        const dvec = Vec2.sub(b.getWorldCenter(), c);
+        const dist = dvec.length();
+        if (dist > r) continue;
+        if (dist < 1e-3) dvec.set(0, -1);
+        dvec.normalize();
+        const m = b.getMass();
+        const dv = (power * (1 - dist / r)) / (1 + m * 0.3);
+        b.applyLinearImpulse(Vec2.mul(dvec, dv * m), b.getWorldCenter(), true);
+      }
+    }
+    this.cutNear(x, y, 1.5);
+    this.toRemove.add(source);
+  }
+
+  private cutNear(x: number, y: number, r: number) {
+    const p = Vec2(x, y);
+    for (const rope of this.ropes) {
+      if (rope.cut || rope.a.removed || rope.b.removed) continue;
+      if (!ropeSegments(rope).some(([a, b]) => segDist(p, a, b) <= r)) continue;
+      rope.cut = true;
+      if (rope.joint) this.world.destroyJoint(rope.joint);
+      rope.joint = null;
     }
   }
 
@@ -273,18 +495,21 @@ export class Sim {
     const p = inst.main.getPosition();
     this.events.push({ kind: 'pop', x: p.x, y: p.y });
     this.popped.add(inst.part.id);
-    this.remove(inst);
+    this.destroy(inst);
   }
 
-  private remove(inst: Inst) {
+  private destroy(inst: Inst) {
+    if (inst.removed) return;
     inst.removed = true;
     for (const r of this.ropes) {
-      if (r.a === inst || r.b === inst) {
+      if (r.a === inst || r.b === inst || r.via === inst) {
         if (r.joint) this.world.destroyJoint(r.joint);
         r.joint = null;
       }
     }
     for (const b of inst.bodies) this.world.destroyBody(b);
+    // a motor or gear going missing changes the drive train
+    if (this.belts.some((b) => b.a === inst || b.b === inst) || PART_DEFS[inst.part.type].gearR) this.powerDirty = true;
   }
 
   drainEvents(): SimEvent[] {
@@ -293,7 +518,7 @@ export class Sim {
     return e;
   }
 
-  // ---------- goals ----------
+  // ------------------------------------------------------------------ goals
 
   goalMet(g: Goal): boolean {
     switch (g.kind) {
@@ -320,7 +545,10 @@ export class Sim {
           if (t.removed) return true;
           return Math.abs(Math.sin(t.main.getAngle())) > 0.7;
         });
+      case 'rung':
+        return ((this.insts.get(g.target)?.st.rings as number) ?? 0) > 0;
     }
+    return false;
   }
 }
 
@@ -352,7 +580,7 @@ export function findOverlaps(sim: Sim): Set<string> {
   return bad;
 }
 
-/** Runs a scene until goals are held (true) or timeout (false). Used by tests and the hint/preview system. */
+/** Runs a scene until goals are held (true) or timeout (false). Used by tests. */
 export function solveCheck(scene: Scene, goals: Goal[], seconds = 30, hold = 0.25): { won: boolean; time: number } {
   const sim = new Sim(scene);
   let held = 0;

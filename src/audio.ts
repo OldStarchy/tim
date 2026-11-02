@@ -60,6 +60,12 @@ const PITCH: Record<string, number> = {
   domino: 900,
   bucket: 520,
   seesaw: 140,
+  superball: 700,
+  steelball: 380,
+  beachball: 180,
+  plank: 160,
+  anvil: 50,
+  tnt: 110,
 };
 
 export function impact(material: string, speed: number) {
@@ -68,7 +74,7 @@ export function impact(material: string, speed: number) {
   voice((c, out, t) => {
     const o = c.createOscillator();
     const f = PITCH[material] ?? 200;
-    o.type = material === 'domino' || material === 'bucket' ? 'square' : 'triangle';
+    o.type = material === 'domino' || material === 'bucket' || material === 'anvil' || material === 'steelball' ? 'square' : 'triangle';
     o.frequency.setValueAtTime(f * 1.6, t);
     o.frequency.exponentialRampToValueAtTime(f, t + 0.06);
     out.gain.setValueAtTime(vol * (material === 'domino' ? 0.25 : 0.6), t);
@@ -153,4 +159,142 @@ export function fanfare() {
       i * 120,
     ),
   );
+}
+
+function noiseBurst(c: AudioContext, seconds: number, decay: number) {
+  const len = Math.floor(c.sampleRate * seconds);
+  const buf = c.createBuffer(1, len, c.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  return src;
+}
+
+export function boom() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 0.9, 2.5);
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(900, t);
+    f.frequency.exponentialRampToValueAtTime(120, t + 0.8);
+    out.gain.setValueAtTime(1.4, t);
+    src.connect(f).connect(out);
+    src.start(t);
+    const o = c.createOscillator();
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(35, t + 0.5);
+    const og = c.createGain();
+    og.gain.setValueAtTime(0.8, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    o.connect(og).connect(out);
+    o.start(t);
+    o.stop(t + 0.6);
+    return 0.9;
+  });
+}
+
+export function shatter() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 0.5, 4);
+    const f = c.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 3500;
+    out.gain.setValueAtTime(0.8, t);
+    src.connect(f).connect(out);
+    src.start(t);
+    for (let i = 0; i < 5; i++) {
+      const o = c.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = 3000 + Math.random() * 4000;
+      const og = c.createGain();
+      const t0 = t + Math.random() * 0.25;
+      og.gain.setValueAtTime(0.08, t0);
+      og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+      o.connect(og).connect(out);
+      o.start(t0);
+      o.stop(t0 + 0.13);
+    }
+    return 0.5;
+  });
+}
+
+export function snap() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 0.06, 6);
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 2500;
+    out.gain.setValueAtTime(1.6, t);
+    src.connect(f).connect(out);
+    src.start(t);
+    const o = c.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(600, t);
+    o.frequency.exponentialRampToValueAtTime(150, t + 0.08);
+    const og = c.createGain();
+    og.gain.setValueAtTime(0.15, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    o.connect(og).connect(out);
+    o.start(t);
+    o.stop(t + 0.1);
+    return 0.12;
+  });
+}
+
+export function snip() {
+  [0, 0.07].forEach((d) =>
+    setTimeout(
+      () =>
+        voice((c, out, t) => {
+          const src = noiseBurst(c, 0.05, 5);
+          const f = c.createBiquadFilter();
+          f.type = 'highpass';
+          f.frequency.value = 5000;
+          out.gain.setValueAtTime(1.2, t);
+          src.connect(f).connect(out);
+          src.start(t);
+          return 0.06;
+        }),
+      d * 1000,
+    ),
+  );
+}
+
+export function ring() {
+  voice((c, out, t) => {
+    out.gain.setValueAtTime(0.25, t);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+    for (const [f, a] of [
+      [880, 1],
+      [880 * 2.0, 0.5],
+      [880 * 2.76, 0.35],
+      [880 * 5.4, 0.15],
+    ]) {
+      const o = c.createOscillator();
+      o.frequency.value = f;
+      const og = c.createGain();
+      og.gain.value = a;
+      o.connect(og).connect(out);
+      o.start(t);
+      o.stop(t + 1.6);
+    }
+    return 1.6;
+  });
+}
+
+export function squeak() {
+  voice((c, out, t) => {
+    const o = c.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(2200, t);
+    o.frequency.exponentialRampToValueAtTime(3400, t + 0.06);
+    o.frequency.exponentialRampToValueAtTime(2600, t + 0.14);
+    out.gain.setValueAtTime(0.12, t);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    o.connect(out);
+    o.start(t);
+    o.stop(t + 0.17);
+    return 0.17;
+  });
 }

@@ -1,151 +1,21 @@
-import { Body, Box, Circle, Polygon, RevoluteJoint, Vec2, World } from 'planck';
+import { Body, Box, Circle, Polygon, RevoluteJoint, Vec2 } from 'planck';
 import type { Part, PartType } from './model';
+import { MORE_PARTS } from './parts-more';
+import {
+  type PartDef,
+  OUTLINE,
+  ball,
+  bodyDef,
+  pinMark,
+  rrect,
+  shadedBall,
+  stroke,
+  tag,
+  wakeTouching,
+  withBody,
+} from './partkit';
 
-export type Role = 'solid' | 'sharp' | 'tramp' | 'conveyor' | 'balloon';
-
-export interface FixtureTag {
-  inst: Inst;
-  role: Role;
-}
-
-export interface Inst {
-  part: Part;
-  main: Body;
-  bodies: Body[];
-  removed: boolean;
-}
-
-export interface LocalBox {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
-
-export interface PartDef {
-  type: PartType;
-  name: string;
-  desc: string;
-  /** dynamic by default (can be pinned) */
-  dynamic: boolean;
-  resize?: { min: number; max: number; def: number };
-  rotate: boolean;
-  flip: boolean;
-  /** trail / accent color */
-  color: string;
-  /** circular hit area radius, else box */
-  radius?: number;
-  bounds(p: Part): LocalBox;
-  /** rope attach point, local to the main body */
-  ropeAnchor?: (p: Part) => { x: number; y: number };
-  build(world: World, p: Part, inst: Inst): void;
-  draw(g: CanvasRenderingContext2D, inst: Inst, t: number): void;
-}
-
-// ---------- helpers ----------
-
-type G = CanvasRenderingContext2D;
-
-function bodyDef(p: Part, dynamic: boolean, extra: Record<string, unknown> = {}) {
-  return {
-    type: dynamic && !p.pinned ? ('dynamic' as const) : ('static' as const),
-    position: Vec2(p.x, p.y),
-    angle: p.angle,
-    ...extra,
-  };
-}
-
-function tag(inst: Inst, role: Role = 'solid'): FixtureTag {
-  return { inst, role };
-}
-
-function withBody(g: G, b: Body, fn: () => void) {
-  const pos = b.getPosition();
-  g.save();
-  g.translate(pos.x, pos.y);
-  g.rotate(b.getAngle());
-  fn();
-  g.restore();
-}
-
-function rrect(g: G, x: number, y: number, w: number, h: number, r: number) {
-  r = Math.min(r, w / 2, h / 2);
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
-}
-
-const OUTLINE = '#141722';
-const LW = 0.07;
-
-function stroke(g: G, w = LW) {
-  g.lineWidth = w;
-  g.strokeStyle = OUTLINE;
-  g.stroke();
-}
-
-function shadedBall(g: G, r: number, base: string, light: string) {
-  const grad = g.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
-  grad.addColorStop(0, light);
-  grad.addColorStop(1, base);
-  g.beginPath();
-  g.arc(0, 0, r, 0, Math.PI * 2);
-  g.fillStyle = grad;
-  g.fill();
-  stroke(g);
-}
-
-function pinMark(g: G, inst: Inst) {
-  if (!inst.part.pinned) return;
-  g.beginPath();
-  g.arc(0, 0, 0.12, 0, Math.PI * 2);
-  g.fillStyle = '#d8dde6';
-  g.fill();
-  stroke(g, 0.04);
-  g.beginPath();
-  g.moveTo(-0.07, 0);
-  g.lineTo(0.07, 0);
-  stroke(g, 0.035);
-}
-
-function ball(
-  type: PartType,
-  name: string,
-  desc: string,
-  r: number,
-  props: { density: number; restitution: number; friction: number },
-  color: string,
-  paint: (g: G, r: number) => void,
-): PartDef {
-  return {
-    type,
-    name,
-    desc,
-    dynamic: true,
-    rotate: false,
-    flip: false,
-    color,
-    radius: r,
-    bounds: () => ({ x0: -r, y0: -r, x1: r, y1: r }),
-    ropeAnchor: () => ({ x: 0, y: 0 }),
-    build(world, p, inst) {
-      const b = world.createBody(bodyDef(p, true, { angularDamping: 0.1, bullet: true }));
-      b.createFixture({ shape: new Circle(r), ...props, userData: tag(inst) });
-      inst.main = b;
-      inst.bodies.push(b);
-    },
-    draw(g, inst) {
-      withBody(g, inst.main, () => {
-        paint(g, r);
-        pinMark(g, inst);
-      });
-    },
-  };
-}
+export type { Category, FixtureTag, Inst, LocalBox, PartDef, Role, SimApi, SimEvent } from './partkit';
 
 // ---------- parts ----------
 
@@ -218,13 +88,14 @@ const balloon: PartDef = {
   type: 'balloon',
   name: 'Balloon',
   desc: 'Floats upward. Pops on anything sharp. Tie a rope to it to lift light things.',
+  category: 'Balls',
   dynamic: true,
   rotate: false,
   flip: false,
   color: '#ff5d7a',
   radius: 0.55,
   bounds: () => ({ x0: -0.55, y0: -0.6, x1: 0.55, y1: 0.85 }),
-  ropeAnchor: () => ({ x: 0, y: 0.72 }),
+  ropeAnchors: () => [{ x: 0, y: 0.72 }],
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, true, { linearDamping: 2.5, angularDamping: 3 }));
     b.createFixture({
@@ -269,12 +140,13 @@ const crate: PartDef = {
   type: 'crate',
   name: 'Crate',
   desc: 'A sturdy wooden box. Good as a counterweight.',
+  category: 'Building',
   dynamic: true,
   rotate: true,
   flip: false,
   color: '#d9a057',
   bounds: () => ({ x0: -0.5, y0: -0.5, x1: 0.5, y1: 0.5 }),
-  ropeAnchor: () => ({ x: 0, y: -0.5 }),
+  ropeAnchors: () => [{ x: 0, y: -0.5 }],
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, true));
     b.createFixture({ shape: new Box(0.5, 0.5), density: 1.5, friction: 0.6, restitution: 0.05, userData: tag(inst) });
@@ -303,6 +175,7 @@ const domino: PartDef = {
   type: 'domino',
   name: 'Domino',
   desc: 'Tall and tippy. Line them up for a chain reaction.',
+  category: 'Building',
   dynamic: true,
   rotate: true,
   flip: false,
@@ -337,12 +210,13 @@ const bucket: PartDef = {
   type: 'bucket',
   name: 'Bucket',
   desc: 'Catches things. Hang it from a rope or pin it in place.',
+  category: 'Building',
   dynamic: true,
   rotate: true,
   flip: false,
   color: '#8fb3cc',
   bounds: () => ({ x0: -BUCKET_HW - 0.05, y0: -1.15, x1: BUCKET_HW + 0.05, y1: BUCKET_HH }),
-  ropeAnchor: () => ({ x: 0, y: -1.1 }),
+  ropeAnchors: () => [{ x: 0, y: -1.1 }],
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, true, { angularDamping: 1.5 }));
     const t = 0.1;
@@ -405,6 +279,7 @@ const wall: PartDef = {
   type: 'wall',
   name: 'Brick Wall',
   desc: 'A solid wall. Resize it and tilt it to make ramps.',
+  category: 'Building',
   dynamic: false,
   resize: { min: 1, max: 24, def: 4 },
   rotate: true,
@@ -446,18 +321,31 @@ const wall: PartDef = {
   },
 };
 
-export const CONVEYOR_SPEED = 6;
-const CONV_T = 0.28;
+export const CONV_T = 0.28;
 const conveyor: PartDef = {
   type: 'conveyor',
   name: 'Conveyor Belt',
-  desc: 'Moves whatever sits on it. Flip (F) to reverse direction.',
+  desc: 'Needs power: run a drive belt from a motor (or gear) to either roller. Moves whatever sits on it.',
+  category: 'Power',
   dynamic: false,
   resize: { min: 2, max: 20, def: 5 },
   rotate: true,
-  flip: true,
+  flip: false,
   color: '#7dd3c0',
   bounds: (p) => ({ x0: -p.length / 2, y0: -CONV_T, x1: p.length / 2, y1: CONV_T + 0.15 }),
+  drives: (p) => [
+    { x: -p.length / 2 + CONV_T, y: 0, r: CONV_T },
+    { x: p.length / 2 - CONV_T, y: 0, r: CONV_T },
+  ],
+  onPower(inst, omega) {
+    // a clockwise roller carries the top of the belt to the right
+    inst.st.speed = omega * CONV_T;
+  },
+  onStep(_api, inst, dt) {
+    const speed = (inst.st.speed as number) ?? 0;
+    inst.st.travel = ((inst.st.travel as number) ?? 0) + speed * dt;
+    if (speed) wakeTouching(inst.main);
+  },
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, false));
     b.createFixture({
@@ -469,39 +357,40 @@ const conveyor: PartDef = {
     inst.main = b;
     inst.bodies.push(b);
   },
-  draw(g, inst, t) {
+  draw(g, inst) {
     const L = inst.part.length;
-    const dir = inst.part.flip ? -1 : 1;
+    const speed = (inst.st.speed as number) ?? 0;
+    const travel = (inst.st.travel as number) ?? 0;
+    const dir = Math.sign(speed);
     withBody(g, inst.main, () => {
       rrect(g, -L / 2, -CONV_T, L, CONV_T * 2, CONV_T);
       g.fillStyle = '#2c3140';
       g.fill();
       stroke(g);
-      // moving tread
+      // moving tread; it's a loop: the top runs one way, the underside comes back the other
       g.save();
       rrect(g, -L / 2 + 0.05, -CONV_T + 0.05, L - 0.1, CONV_T * 2 - 0.1, CONV_T);
       g.clip();
-      // it's a loop: the top runs one way, the underside comes back the other
       const wrap = (v: number) => ((v % 0.5) + 0.5) % 0.5;
-      const topOff = wrap(t * CONVEYOR_SPEED * dir);
-      const botOff = wrap(-t * CONVEYOR_SPEED * dir);
-      g.strokeStyle = '#4fd1b6';
+      const topOff = wrap(travel);
+      const botOff = wrap(-travel);
+      g.strokeStyle = dir ? '#4fd1b6' : '#5d6b80';
       g.lineWidth = 0.05;
       g.beginPath();
       for (let x = -L / 2 - 0.5 + topOff; x < L / 2 + 0.5; x += 0.5) {
-        g.moveTo(x - 0.06 * dir, -CONV_T);
-        g.lineTo(x + 0.06 * dir, -CONV_T + 0.1);
+        g.moveTo(x, -CONV_T);
+        g.lineTo(x, -CONV_T + 0.1);
       }
       for (let x = -L / 2 - 0.5 + botOff; x < L / 2 + 0.5; x += 0.5) {
-        g.moveTo(x + 0.06 * dir, CONV_T);
-        g.lineTo(x - 0.06 * dir, CONV_T - 0.1);
+        g.moveTo(x, CONV_T);
+        g.lineTo(x, CONV_T - 0.1);
       }
       g.stroke();
       g.restore();
       for (const x of [-L / 2 + CONV_T, L / 2 - CONV_T]) {
         g.save();
         g.translate(x, 0);
-        g.rotate(t * CONVEYOR_SPEED * dir / CONV_T);
+        g.rotate(travel / CONV_T);
         g.beginPath();
         g.arc(0, 0, CONV_T * 0.6, 0, Math.PI * 2);
         g.fillStyle = '#9aa6b8';
@@ -513,14 +402,15 @@ const conveyor: PartDef = {
         stroke(g, 0.04);
         g.restore();
       }
-      // direction arrow
-      g.fillStyle = '#4fd1b6';
-      g.beginPath();
-      g.moveTo(0.18 * dir, 0);
-      g.lineTo(-0.1 * dir, -0.12);
-      g.lineTo(-0.1 * dir, 0.12);
-      g.closePath();
-      g.fill();
+      if (dir) {
+        g.fillStyle = '#4fd1b6';
+        g.beginPath();
+        g.moveTo(0.18 * dir, 0);
+        g.lineTo(-0.1 * dir, -0.12);
+        g.lineTo(-0.1 * dir, 0.12);
+        g.closePath();
+        g.fill();
+      }
     });
   },
 };
@@ -533,6 +423,7 @@ const trampoline: PartDef = {
   type: 'trampoline',
   name: 'Trampoline',
   desc: 'Launches things that land on it with a guaranteed big bounce.',
+  category: 'Contraptions',
   dynamic: false,
   resize: { min: 1.5, max: 6, def: 2.5 },
   rotate: true,
@@ -600,14 +491,19 @@ export function seesawLimit(length: number) {
 }
 const seesaw: PartDef = {
   type: 'seesaw',
-  name: 'Teeter-Totter',
-  desc: 'Drop something on the high end to fling things off the other. Flip (F) to change which end is up.',
+  name: 'See-Saw',
+  desc: 'Drop something on the high end to fling things off the other. Ropes can tie to either end. Flip (F) to change which end is up.',
+  category: 'Contraptions',
   dynamic: false,
   resize: { min: 3, max: 12, def: 6 },
   rotate: false,
   flip: true,
   color: '#e0aa62',
   bounds: (p) => ({ x0: -p.length / 2, y0: -0.4 - (Math.sin(seesawLimit(p.length)) * p.length) / 2, x1: p.length / 2, y1: 1.1 }),
+  ropeAnchors: (p) => [
+    { x: -p.length / 2 + 0.15, y: -0.12 },
+    { x: p.length / 2 - 0.15, y: -0.12 },
+  ],
   build(world, p, inst) {
     const base = world.createBody({ type: 'static', position: Vec2(p.x, p.y) });
     base.createFixture({
@@ -682,6 +578,7 @@ const needle: PartDef = {
   type: 'needle',
   name: 'Pin',
   desc: 'Sharp! Pops balloons. Rotate it to point anywhere.',
+  category: 'Contraptions',
   dynamic: false,
   rotate: true,
   flip: false,
@@ -723,6 +620,7 @@ const fan: PartDef = {
   type: 'fan',
   name: 'Fan',
   desc: 'Blows a strong breeze. Light things fly, heavy things barely budge. Flip (F) to turn around.',
+  category: 'Contraptions',
   dynamic: false,
   rotate: true,
   flip: true,
@@ -795,13 +693,14 @@ const hook: PartDef = {
   type: 'hook',
   name: 'Hook',
   desc: 'A fixed anchor point to hang ropes from.',
+  category: 'Building',
   dynamic: false,
   rotate: false,
   flip: false,
   color: '#e8c547',
   radius: 0.25,
   bounds: () => ({ x0: -0.25, y0: -0.25, x1: 0.25, y1: 0.25 }),
-  ropeAnchor: () => ({ x: 0, y: 0 }),
+  ropeAnchors: () => [{ x: 0, y: 0 }],
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, false));
     b.createFixture({ shape: new Circle(0.15), isSensor: true, userData: tag(inst) });
@@ -828,6 +727,7 @@ const pulley: PartDef = {
   type: 'pulley',
   name: 'Pulley',
   desc: 'Run a rope over it: when one end goes down, the other goes up.',
+  category: 'Building',
   dynamic: false,
   rotate: false,
   flip: false,
@@ -885,24 +785,48 @@ export const PART_DEFS: Record<PartType, PartDef> = {
   fan,
   hook,
   pulley,
+  ...MORE_PARTS,
 };
 
+/** bin layout: grouped by category, in this order */
 export const BIN_ORDER: PartType[] = [
+  // balls
   'bowling',
   'basketball',
   'baseball',
+  'superball',
+  'steelball',
+  'beachball',
   'balloon',
+  // building
+  'wall',
+  'wedge',
+  'curve',
+  'funnel',
+  'glass',
+  'plank',
   'crate',
   'domino',
   'bucket',
-  'wall',
-  'conveyor',
-  'trampoline',
-  'seesaw',
-  'needle',
-  'fan',
+  'anvil',
   'hook',
   'pulley',
+  // contraptions
+  'trampoline',
+  'seesaw',
+  'mousetrap',
+  'bumper',
+  'needle',
+  'scissors',
+  'fan',
+  'magnet',
+  'bell',
+  'tnt',
+  // power
+  'motor',
+  'mouse',
+  'gear',
+  'conveyor',
 ];
 
 export function defaultPart(type: PartType, x: number, y: number, id: string): Part {

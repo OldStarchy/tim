@@ -2,7 +2,7 @@ import { Vec2 } from 'planck';
 import type { Goal, Part, Zone } from './model';
 import { BOARD_H, BOARD_W } from './model';
 import { PART_DEFS, PULLEY_R, toWorld } from './parts';
-import { RopeInst, Sim, pulleySides, ropeAnchorWorld } from './sim';
+import { BeltInst, RopeInst, Sim, driveWorld, pulleySides, ropeAnchorWorld, ropeAnchorWorldX } from './sim';
 
 export class Camera {
   scale = 20;
@@ -133,41 +133,85 @@ function ropeLine(g: CanvasRenderingContext2D, ax: number, ay: number, bx: numbe
 }
 
 export function drawRopes(g: CanvasRenderingContext2D, ropes: RopeInst[], highlight?: string) {
+  g.lineCap = 'round';
+  const paint = (selected: boolean) => {
+    g.lineWidth = 0.13;
+    g.strokeStyle = '#141722';
+    g.stroke();
+    g.lineWidth = 0.07;
+    g.strokeStyle = selected ? '#ffd666' : '#d8c08a';
+    g.stroke();
+  };
   for (const r of ropes) {
-    if (r.a.removed || r.b.removed) continue;
-    const pa = ropeAnchorWorld(r.a);
-    const pb = ropeAnchorWorld(r.b);
+    if (r.a.removed && r.b.removed) continue;
+    const pa = ropeAnchorWorld(r.a, r.rope.aEnd);
+    const pb = ropeAnchorWorld(r.b, r.rope.bEnd);
+    if (r.cut || r.a.removed || r.b.removed) {
+      // snipped: a short frayed end dangles from whatever's left
+      g.beginPath();
+      for (const [inst, p] of [
+        [r.a, pa],
+        [r.b, pb],
+      ] as const) {
+        if (inst.removed) continue;
+        g.moveTo(p.x, p.y);
+        g.quadraticCurveTo(p.x + 0.15, p.y + 0.4, p.x, p.y + 0.7);
+      }
+      paint(false);
+      continue;
+    }
     g.beginPath();
     if (r.via && !r.via.removed) {
       const pp = r.via.main.getPosition();
-      const [gax, gbx] = pulleySides(pp.x, ropeAnchorWorldPart(r, 'a'), ropeAnchorWorldPart(r, 'b'));
+      const [gax, gbx] = pulleySides(pp.x, ropeAnchorWorldX(r.a.part, r.rope.aEnd), ropeAnchorWorldX(r.b.part, r.rope.bEnd));
       const la = Vec2.distance(pa, Vec2(gax, pp.y));
       const lb = Vec2.distance(pb, Vec2(gbx, pp.y));
       const slack = Math.max(0, r.length - la - lb);
       ropeLine(g, pa.x, pa.y, gax, pp.y, slack / 2);
       const ccw = gax > gbx;
-      g.arc(pp.x, pp.y, PULLEY_R, gax < pp.x ? Math.PI : 0, gbx < pp.x ? Math.PI : 0, !ccw ? false : true);
+      g.arc(pp.x, pp.y, PULLEY_R, gax < pp.x ? Math.PI : 0, gbx < pp.x ? Math.PI : 0, ccw);
       ropeLine(g, gbx, pp.y, pb.x, pb.y, slack / 2);
     } else {
       const slack = r.joint ? Math.max(0, r.length - Vec2.distance(pa, pb)) : 0;
       ropeLine(g, pa.x, pa.y, pb.x, pb.y, slack);
     }
-    g.lineCap = 'round';
-    g.lineWidth = 0.13;
-    g.strokeStyle = '#141722';
-    g.stroke();
-    g.lineWidth = 0.07;
-    g.strokeStyle = r.rope.id === highlight ? '#ffd666' : '#d8c08a';
-    g.stroke();
+    paint(r.rope.id === highlight);
   }
 }
 
-/** x of rope anchors at build time (keeps pulley side assignment stable while things swing) */
-function ropeAnchorWorldPart(r: RopeInst, end: 'a' | 'b') {
-  const inst = end === 'a' ? r.a : r.b;
-  const def = PART_DEFS[inst.part.type];
-  const l = def.ropeAnchor ? def.ropeAnchor(inst.part) : { x: 0, y: 0 };
-  return toWorld(inst.part, l.x, l.y).x;
+/** drive belts: a loop wrapped around two hubs */
+export function drawBelts(g: CanvasRenderingContext2D, belts: BeltInst[], t: number, highlight?: string) {
+  for (const b of belts) {
+    if (b.a.removed || b.b.removed) continue;
+    const A = driveWorld(b.a.part, b.belt.aEnd);
+    const B = driveWorld(b.b.part, b.belt.bEnd);
+    const dx = B.x - A.x;
+    const dy = B.y - A.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const nx = -dy / d;
+    const ny = dx / d;
+    const ang = Math.atan2(dy, dx);
+    g.beginPath();
+    g.moveTo(A.x + nx * A.r, A.y + ny * A.r);
+    g.lineTo(B.x + nx * B.r, B.y + ny * B.r);
+    g.arc(B.x, B.y, B.r, ang + Math.PI / 2, ang - Math.PI / 2, true);
+    g.lineTo(A.x - nx * A.r, A.y - ny * A.r);
+    g.arc(A.x, A.y, A.r, ang - Math.PI / 2, ang + Math.PI / 2, true);
+    g.closePath();
+    g.lineWidth = 0.14;
+    g.strokeStyle = '#141722';
+    g.stroke();
+    g.lineWidth = 0.08;
+    g.strokeStyle = b.belt.id === highlight ? '#ffd666' : '#3b3f4c';
+    g.stroke();
+    // little dashes show it's a moving belt
+    g.setLineDash([0.12, 0.3]);
+    g.lineDashOffset = -t * 3;
+    g.lineWidth = 0.03;
+    g.strokeStyle = '#7a8296';
+    g.stroke();
+    g.setLineDash([]);
+  }
 }
 
 export function drawParts(g: CanvasRenderingContext2D, sim: Sim, t: number, order: string[]) {

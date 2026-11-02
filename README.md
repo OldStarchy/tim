@@ -7,9 +7,14 @@ trampolines and teeter-totters onto the board, press **Start**, and watch the co
 
 ## What's in the prototype
 
-- 7 puzzles plus a **Free Build** sandbox with every part unlimited (shareable via link)
-- 15 parts: bowling ball, basketball, baseball, balloon, crate, domino, bucket, brick wall,
-  conveyor belt, trampoline, teeter-totter, pin, fan, hook, pulley, and ropes (with or without a pulley)
+- 12 puzzles plus a **Free Build** sandbox with every part unlimited (shareable via link)
+- 33 parts, grouped in the bin:
+  - **Balls:** bowling ball, basketball, baseball, super ball, steel ball, beach ball, balloon
+  - **Building:** brick wall, wedge, curved ramp, funnel, glass pane, plank, crate, domino, bucket, anvil, hook,
+    pulley, and ropes (tie to either end of see-saws and planks, optionally over a pulley)
+  - **Contraptions:** trampoline, see-saw, mousetrap, bumper, pin, scissors (cut ropes), fan, magnet, bell, TNT
+  - **Power:** electric motor, mouse motor (wakes when bumped), gears (mesh when their teeth touch, and reverse
+    direction), conveyor belts (need power), and drive belts to connect them
 - Modern controls TIM never had:
   - **Trajectory preview** in Free Build — ghost paths update live while you edit (off in puzzles, it'd give them away)
   - Undo / redo, grid snap (hold <kbd>Alt</kbd> to ignore), duplicate, arrow-key nudging
@@ -48,8 +53,10 @@ solution tests trustworthy.
 | File | What |
 | --- | --- |
 | `src/model.ts` | Plain-JSON scene/level types |
-| `src/parts.ts` | Every part: physics bodies, drawing, editor bounds |
-| `src/sim.ts` | World wrapper: balloons, fans, conveyors, trampolines, ropes/pulleys, goals |
+| `src/partkit.ts` | Part definition types and shared drawing/physics helpers |
+| `src/parts.ts` | The original parts + the part catalog / bin order |
+| `src/parts-more.ts` | Power train, gadgets and the newer building parts |
+| `src/sim.ts` | World wrapper: power propagation, contact hooks, explosions, rope cutting, goals |
 | `src/levels.ts` | Puzzles, each with a reference solution |
 | `src/game.ts` | Editor, input, run loop, UI |
 | `src/render.ts` | Board, ropes, trails, selection drawing |

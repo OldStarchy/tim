@@ -46,7 +46,8 @@ export function encodeScene(s: Scene): string {
   const round = (n: number) => Math.round(n * 1000) / 1000;
   const compact = {
     p: s.parts.map((p) => [p.id, p.type, round(p.x), round(p.y), round(p.angle), round(p.length), p.flip ? 1 : 0, p.pinned ? 1 : 0]),
-    r: s.ropes.map((r) => [r.id, r.a, r.b, r.via ?? '']),
+    r: s.ropes.map((r) => [r.id, r.a, r.b, r.via ?? '', r.aEnd ?? 0, r.bEnd ?? 0]),
+    b: (s.belts ?? []).map((b) => [b.id, b.a, b.b, b.aEnd ?? 0, b.bEnd ?? 0]),
   };
   const bytes = new TextEncoder().encode(JSON.stringify(compact));
   let bin = '';
@@ -58,7 +59,7 @@ export function decodeScene(code: string): Scene | null {
   try {
     const bin = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
     const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    const c = JSON.parse(new TextDecoder().decode(bytes)) as { p: unknown[][]; r: string[][] };
+    const c = JSON.parse(new TextDecoder().decode(bytes)) as { p: unknown[][]; r: unknown[][]; b?: unknown[][] };
     return {
       parts: c.p.map(([id, type, x, y, angle, length, flip, pinned]) => ({
         id: String(id),
@@ -70,7 +71,21 @@ export function decodeScene(code: string): Scene | null {
         flip: !!flip,
         pinned: !!pinned,
       })),
-      ropes: c.r.map(([id, a, b, via]) => ({ id, a, b, via: via || undefined })),
+      ropes: c.r.map(([id, a, b, via, aEnd, bEnd]) => ({
+        id: String(id),
+        a: String(a),
+        b: String(b),
+        via: via ? String(via) : undefined,
+        aEnd: Number(aEnd ?? 0),
+        bEnd: Number(bEnd ?? 0),
+      })),
+      belts: (c.b ?? []).map(([id, a, b, aEnd, bEnd]) => ({
+        id: String(id),
+        a: String(a),
+        b: String(b),
+        aEnd: Number(aEnd ?? 0),
+        bEnd: Number(bEnd ?? 0),
+      })),
     };
   } catch {
     return null;

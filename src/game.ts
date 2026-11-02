@@ -1,9 +1,8 @@
-import { Vec2 } from 'planck';
 import * as audio from './audio';
 import * as music from './music';
 import { LEVELS } from './levels';
-import { BOARD_H, BOARD_W, Bin, Level, Part, PartType, Rope, Scene, cloneScene, newId } from './model';
-import { BIN_ORDER, PART_DEFS, defaultPart, hitPart } from './parts';
+import { BOARD_H, BOARD_W, Belt, Bin, Level, Link, Part, PartType, Rope, Scene, cloneScene, newId } from './model';
+import { BIN_ORDER, type Category, PART_DEFS, defaultPart, hitPart } from './parts';
 import {
   Camera,
   Particle,
@@ -12,12 +11,13 @@ import {
   drawGoalMarkers,
   drawParticles,
   drawParts,
+  drawBelts,
   drawRopes,
   drawSelection,
   drawTrails,
   partHandles,
 } from './render';
-import { DT, Sim, findOverlaps, ropeAnchorWorld } from './sim';
+import { DT, Sim, driveWorld, findOverlaps, ropeAnchorWorld, ropeSegments } from './sim';
 import * as store from './storage';
 
 type Mode = 'edit' | 'run';
@@ -42,7 +42,9 @@ interface Drag {
 }
 
 interface RopeTool {
+  kind: Link;
   from?: string;
+  fromEnd?: number;
   via?: string;
 }
 
@@ -136,6 +138,11 @@ export class Game {
         left.rope!--;
         this.scene.ropes.push(r);
       }
+      for (const b of saved.belts ?? []) {
+        if (b.locked || !((left.belt ?? 0) > 0)) continue;
+        left.belt!--;
+        this.belts.push(b);
+      }
       this.pruneRopes();
     }
     this.bin = { ...lvl.bin };
@@ -146,9 +153,10 @@ export class Game {
   loadSandbox(scene?: Scene) {
     this.level = null;
     this.levelIndex = -1;
-    this.scene = scene ? cloneScene(scene) : store.loadSandbox() ?? { parts: [], ropes: [] };
+    this.scene = cloneScene(scene ?? store.loadSandbox() ?? { parts: [], ropes: [] });
     for (const p of this.scene.parts) p.locked = false;
     for (const r of this.scene.ropes) r.locked = false;
+    for (const b of this.belts) b.locked = false;
     this.bin = {};
     this.afterLoad();
     if (!scene) location.hash = '#sandbox';
@@ -189,13 +197,19 @@ export class Game {
     return this.level === null;
   }
 
-  available(type: PartType | 'rope'): number {
+  get belts(): Belt[] {
+    return (this.scene.belts ??= []);
+  }
+
+  available(type: PartType | Link): number {
     if (this.sandbox) return Infinity;
     const total = this.bin[type] ?? 0;
     const used =
       type === 'rope'
         ? this.scene.ropes.filter((r) => !r.locked).length
-        : this.scene.parts.filter((p) => !p.locked && p.type === type).length;
+        : type === 'belt'
+          ? this.belts.filter((b) => !b.locked).length
+          : this.scene.parts.filter((p) => !p.locked && p.type === type).length;
     return total - used;
   }
 
@@ -205,6 +219,7 @@ export class Game {
       store.saveLevelScene(this.level.id, {
         parts: this.scene.parts.filter((p) => !p.locked),
         ropes: this.scene.ropes.filter((r) => !r.locked),
+        belts: this.belts.filter((b) => !b.locked),
       });
   }
 
@@ -282,12 +297,60 @@ export class Game {
         this.particles.push({ x: e.x, y: e.y + 0.4, vx: 0, vy: 0, life: 0.35, max: 0.35, color: '#4fd1b6', size: 0.8, ring: true });
       } else if (e.kind === 'impact') {
         audio.impact(e.material, e.speed);
+      } else if (e.kind === 'boom') {
+        audio.boom();
+        this.burst(e.x, e.y, 40, 14, ['#ffd666', '#ff8a3d', '#e8463c', '#5d5d66'], 0.9, 0.3);
+        this.particles.push({ x: e.x, y: e.y, vx: 0, vy: 0, life: 0.5, max: 0.5, color: '#ffd666', size: 4, ring: true });
+      } else if (e.kind === 'shatter') {
+        audio.shatter();
+        const c = Math.cos(e.angle);
+        const sn = Math.sin(e.angle);
+        for (let i = 0; i < 26; i++) {
+          const k = (Math.random() - 0.5) * e.length;
+          this.particles.push({
+            x: e.x + c * k,
+            y: e.y + sn * k,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.7) * 6,
+            life: 0.9,
+            max: 0.9,
+            color: i % 3 ? 'rgba(190,230,255,0.9)' : '#ffffff',
+            size: 0.1 + Math.random() * 0.08,
+          });
+        }
+      } else if (e.kind === 'snap') {
+        audio.snap();
+      } else if (e.kind === 'cut') {
+        audio.snip();
+        this.burst(e.x, e.y, 6, 3, ['#d8c08a'], 0.4, 0.08);
+      } else if (e.kind === 'ring') {
+        audio.ring();
+        this.particles.push({ x: e.x, y: e.y, vx: 0, vy: 0, life: 0.6, max: 0.6, color: '#ffd666', size: 1.2, ring: true });
+      } else if (e.kind === 'squeak') {
+        audio.squeak();
       }
     }
     if (this.level && !this.won) {
       const all = this.level.goals.every((g) => this.sim.goalMet(g));
       this.holdTime = all ? this.holdTime + DT : 0;
       if (this.holdTime >= 0.25) this.win();
+    }
+  }
+
+  private burst(x: number, y: number, n: number, speed: number, colors: string[], life: number, size: number) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = speed * (0.3 + Math.random() * 0.7);
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life,
+        max: life,
+        color: colors[i % colors.length],
+        size: size * (0.6 + Math.random() * 0.8),
+      });
     }
   }
 
@@ -435,6 +498,7 @@ export class Game {
     if (this.mode === 'edit' && this.previewOn) drawTrails(g, this.trails);
     const order = this.scene.parts.map((p) => p.id);
     drawParts(g, this.sim, simT, order);
+    drawBelts(g, this.sim.belts, this.mode === 'run' ? this.sim.time : 0, this.selectedRope ?? undefined);
     drawRopes(g, this.sim.ropes, this.selectedRope ?? undefined);
 
     if (this.mode === 'edit') {
@@ -493,41 +557,57 @@ export class Game {
     g.restore();
   }
 
+  /** every point a rope (or belt) could attach to right now */
+  private linkPoints(kind: Link): { part: Part; end: number; x: number; y: number }[] {
+    const out: { part: Part; end: number; x: number; y: number }[] = [];
+    for (const p of this.scene.parts) {
+      const def = PART_DEFS[p.type];
+      const inst = this.sim.insts.get(p.id);
+      if (!inst) continue;
+      if (kind === 'rope' && def.ropeAnchors) {
+        def.ropeAnchors(p).forEach((_, end) => out.push({ part: p, end, ...ropeAnchorWorld(inst, end) }));
+      } else if (kind === 'belt' && def.drives) {
+        def.drives(p).forEach((_, end) => out.push({ part: p, end, ...driveWorld(p, end) }));
+      }
+    }
+    return out;
+  }
+
   private drawRopeTool() {
     const g = this.g;
     const px = 1 / this.cam.scale;
-    // highlight valid anchors
-    for (const p of this.scene.parts) {
-      const def = PART_DEFS[p.type];
-      const isPulley = p.type === 'pulley';
-      if (!def.ropeAnchor && !isPulley) continue;
-      if (isPulley && (!this.ropeTool?.from || this.ropeTool.via)) continue;
-      const inst = this.sim.insts.get(p.id);
-      if (!inst) continue;
-      const a = isPulley ? inst.main.getPosition() : ropeAnchorWorld(inst);
-      const chosen = p.id === this.ropeTool!.from || p.id === this.ropeTool!.via;
+    const tool = this.ropeTool!;
+    const color = tool.kind === 'belt' ? '#7fc4f0' : '#ffd666';
+    const dot = (x: number, y: number, chosen: boolean) => {
       g.beginPath();
-      g.arc(a.x, a.y, (chosen ? 9 : 6 + Math.sin(this.wallTime * 6) * 1.5) * px, 0, Math.PI * 2);
-      g.fillStyle = chosen ? '#ffd666' : 'rgba(255,214,102,0.35)';
+      g.arc(x, y, (chosen ? 9 : 6 + Math.sin(this.wallTime * 6) * 1.5) * px, 0, Math.PI * 2);
+      g.fillStyle = chosen ? color : tool.kind === 'belt' ? 'rgba(127,196,240,0.35)' : 'rgba(255,214,102,0.35)';
       g.fill();
       g.lineWidth = 2 * px;
-      g.strokeStyle = '#ffd666';
+      g.strokeStyle = color;
       g.stroke();
+    };
+    for (const pt of this.linkPoints(tool.kind)) dot(pt.x, pt.y, pt.part.id === tool.from && pt.end === tool.fromEnd);
+    if (tool.kind === 'rope' && tool.from && !tool.via) {
+      for (const p of this.scene.parts) if (p.type === 'pulley') dot(p.x, p.y, false);
     }
-    if (this.ropeTool?.from && this.hover) {
-      const inst = this.sim.insts.get(this.ropeTool.from);
-      if (!inst) return;
-      const a = ropeAnchorWorld(inst);
+    if (tool.via) {
+      const v = this.part(tool.via);
+      if (v) dot(v.x, v.y, true);
+    }
+    if (tool.from && this.hover) {
+      const start = this.linkPoints(tool.kind).find((pt) => pt.part.id === tool.from && pt.end === tool.fromEnd);
+      if (!start) return;
       g.beginPath();
-      g.moveTo(a.x, a.y);
-      if (this.ropeTool.via) {
-        const v = this.sim.insts.get(this.ropeTool.via)!.main.getPosition();
+      g.moveTo(start.x, start.y);
+      if (tool.via) {
+        const v = this.part(tool.via)!;
         g.lineTo(v.x, v.y - 0.4);
       }
       g.lineTo(this.hover.x, this.hover.y);
       g.setLineDash([6 * px, 5 * px]);
       g.lineWidth = 2.5 * px;
-      g.strokeStyle = '#d8c08a';
+      g.strokeStyle = tool.kind === 'belt' ? '#7a8296' : '#d8c08a';
       g.stroke();
       g.setLineDash([]);
     }
@@ -579,6 +659,7 @@ export class Game {
   private pruneRopes() {
     const ids = new Set(this.scene.parts.map((p) => p.id));
     this.scene.ropes = this.scene.ropes.filter((r) => ids.has(r.a) && ids.has(r.b) && (!r.via || ids.has(r.via)));
+    this.scene.belts = this.belts.filter((b) => ids.has(b.a) && ids.has(b.b));
   }
 
   private mutate(fn: () => void) {
@@ -591,9 +672,13 @@ export class Game {
 
   deleteSelected() {
     if (this.selectedRope) {
-      const r = this.scene.ropes.find((r) => r.id === this.selectedRope);
+      const id = this.selectedRope;
+      const r = this.scene.ropes.find((r) => r.id === id);
       if (r && !r.locked) this.mutate(() => (this.scene.ropes = this.scene.ropes.filter((x) => x !== r)));
+      const b = this.belts.find((b) => b.id === id);
+      if (b && !b.locked) this.mutate(() => (this.scene.belts = this.belts.filter((x) => x !== b)));
       this.selectedRope = null;
+      this.updateUI();
       return;
     }
     const doomed = new Set(this.selParts().map((p) => p.id));
@@ -609,7 +694,8 @@ export class Game {
     if (!parts.length) return null;
     const ids = new Set(parts.map((p) => p.id));
     const ropes = this.scene.ropes.filter((r) => !r.locked && ids.has(r.a) && ids.has(r.b) && (!r.via || ids.has(r.via)));
-    return cloneScene({ parts, ropes });
+    const belts = this.belts.filter((b) => !b.locked && ids.has(b.a) && ids.has(b.b));
+    return cloneScene({ parts, ropes, belts });
   }
 
   /** adds a copy of `src` offset by (dx, dy) if the bin allows it; selects the copies */
@@ -617,9 +703,11 @@ export class Game {
     const need: Record<string, number> = {};
     for (const p of src.parts) need[p.type] = (need[p.type] ?? 0) + 1;
     if (src.ropes.length) need.rope = src.ropes.length;
+    if (src.belts?.length) need.belt = src.belts.length;
     for (const [type, n] of Object.entries(need)) {
-      if (this.available(type as PartType | 'rope') < n) {
-        this.toast(`Not enough ${type === 'rope' ? 'ropes' : PART_DEFS[type as PartType].name.toLowerCase() + 's'} left in the bin`);
+      if (this.available(type as PartType | Link) < n) {
+        const name = type === 'rope' || type === 'belt' ? `${type}s` : PART_DEFS[type as PartType].name.toLowerCase() + 's';
+        this.toast(`Not enough ${name} left in the bin`);
         return false;
       }
     }
@@ -637,9 +725,11 @@ export class Game {
       b: map.get(r.b)!,
       via: r.via ? map.get(r.via) : undefined,
     }));
+    const belts = (src.belts ?? []).map((b) => ({ ...b, id: newId('b'), locked: false, a: map.get(b.a)!, b: map.get(b.b)! }));
     this.mutate(() => {
       this.scene.parts.push(...parts);
       this.scene.ropes.push(...ropes);
+      this.belts.push(...belts);
     });
     this.sel = new Set(parts.map((p) => p.id));
     this.selectedRope = null;
@@ -770,6 +860,7 @@ export class Game {
     this.mutate(() => {
       this.scene.parts = this.scene.parts.filter((p) => p.locked);
       this.scene.ropes = this.scene.ropes.filter((r) => r.locked);
+      this.scene.belts = this.belts.filter((b) => b.locked);
     });
     this.selected = null;
     this.updateUI();
@@ -781,51 +872,86 @@ export class Game {
 
   // ---------------------------------------------------------------- rope tool
 
-  toggleRopeTool() {
+  toggleRopeTool(kind: Link = 'rope') {
     if (this.mode !== 'edit') return;
-    if (this.ropeTool) {
+    if (this.ropeTool?.kind === kind) {
       this.ropeTool = null;
     } else {
-      if (this.available('rope') <= 0) {
-        this.toast('No ropes left in the bin');
+      if (this.available(kind) <= 0) {
+        this.toast(`No ${kind}s left in the bin`);
         return;
       }
-      this.ropeTool = {};
-      this.selected = null;
-      this.toast('Click something to tie the rope to — Esc to cancel');
+      this.ropeTool = { kind };
+      this.sel.clear();
+      this.toast(
+        kind === 'rope'
+          ? 'Click an attach point to start the rope — Esc to cancel'
+          : 'Click a motor, gear or conveyor hub to start the belt — Esc to cancel',
+      );
     }
     this.updateUI();
   }
 
+  /** nearest attach point under the cursor, else the nearest one on the part under the cursor */
+  private pickLinkPoint(kind: Link, wx: number, wy: number) {
+    const pts = this.linkPoints(kind);
+    const tol = 14 / this.cam.scale;
+    let best: (typeof pts)[number] | undefined;
+    let bestD = Infinity;
+    for (const pt of pts) {
+      const d = Math.hypot(pt.x - wx, pt.y - wy);
+      if (d < bestD) {
+        bestD = d;
+        best = pt;
+      }
+    }
+    if (best && bestD <= tol) return best;
+    const part = this.hitTest(wx, wy, (p) => pts.some((pt) => pt.part === p));
+    if (!part) return undefined;
+    return pts
+      .filter((pt) => pt.part === part)
+      .sort((a, b) => Math.hypot(a.x - wx, a.y - wy) - Math.hypot(b.x - wx, b.y - wy))[0];
+  }
+
   private ropeClick(wx: number, wy: number) {
     const tool = this.ropeTool!;
-    const target = this.hitTest(wx, wy, (p) => !!PART_DEFS[p.type].ropeAnchor || p.type === 'pulley');
-    if (!target) {
+    if (tool.kind === 'rope' && tool.from && !tool.via) {
+      const pulley = this.hitTest(wx, wy, (p) => p.type === 'pulley');
+      if (pulley) {
+        tool.via = pulley.id;
+        audio.click();
+        return;
+      }
+    }
+    const pick = this.pickLinkPoint(tool.kind, wx, wy);
+    if (!pick) {
       this.ropeTool = null;
       this.updateUI();
       return;
     }
-    if (target.type === 'pulley') {
-      if (tool.from && !tool.via) tool.via = target.id;
-      else if (!tool.from) this.toast('Start the rope on something, then click the pulley');
-      return;
-    }
     if (!tool.from) {
-      tool.from = target.id;
+      tool.from = pick.part.id;
+      tool.fromEnd = pick.end;
       audio.click();
       return;
     }
-    if (target.id === tool.from) return;
-    const rope: Rope = { id: newId('r'), a: tool.from, b: target.id, via: tool.via };
+    if (pick.part.id === tool.from && (tool.kind === 'belt' || pick.end === tool.fromEnd)) return;
     const a = this.part(tool.from)!;
-    if (!PART_DEFS[a.type].dynamic && !PART_DEFS[target.type].dynamic) {
-      this.toast('A rope between two fixed things would do nothing');
-      return;
+    if (tool.kind === 'rope') {
+      if (!PART_DEFS[a.type].dynamic && !PART_DEFS[pick.part.type].dynamic) {
+        this.toast('A rope between two fixed things would do nothing');
+        return;
+      }
+      const rope: Rope = { id: newId('r'), a: tool.from, b: pick.part.id, aEnd: tool.fromEnd, bEnd: pick.end, via: tool.via };
+      this.mutate(() => this.scene.ropes.push(rope));
+      this.selectedRope = rope.id;
+    } else {
+      const belt: Belt = { id: newId('b'), a: tool.from, b: pick.part.id, aEnd: tool.fromEnd, bEnd: pick.end };
+      this.mutate(() => this.belts.push(belt));
+      this.selectedRope = belt.id;
     }
-    this.mutate(() => this.scene.ropes.push(rope));
     audio.click();
     this.ropeTool = null;
-    this.selectedRope = rope.id;
     this.updateUI();
   }
 
@@ -843,22 +969,17 @@ export class Game {
     return undefined;
   }
 
-  private hitRope(wx: number, wy: number): Rope | undefined {
+  /** a rope or belt under the cursor */
+  private hitRope(wx: number, wy: number): { id: string } | undefined {
     const tol = 8 / this.cam.scale;
     for (const r of this.sim.ropes) {
       if (r.a.removed || r.b.removed) continue;
-      const pa = ropeAnchorWorld(r.a);
-      const pb = ropeAnchorWorld(r.b);
-      const pts = [pa];
-      if (r.via) {
-        const v = r.via.main.getPosition();
-        pts.push(Vec2(v.x - 0.4, v.y), Vec2(v.x + 0.4, v.y));
-        if (pa.x > pb.x) pts.splice(1, 2, Vec2(v.x + 0.4, v.y), Vec2(v.x - 0.4, v.y));
-      }
-      pts.push(pb);
-      for (let i = 0; i < pts.length - 1; i++) {
-        if (segDist(wx, wy, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < tol) return r.rope;
-      }
+      for (const [a, b] of ropeSegments(r)) if (segDist(wx, wy, a.x, a.y, b.x, b.y) < tol) return r.rope;
+    }
+    for (const b of this.sim.belts) {
+      const A = driveWorld(b.a.part, b.belt.aEnd);
+      const B = driveWorld(b.b.part, b.belt.bEnd);
+      if (segDist(wx, wy, A.x, A.y, B.x, B.y) < tol + A.r) return b.belt;
     }
     return undefined;
   }
@@ -1148,7 +1269,8 @@ export class Game {
     else if (k === '=' || k === '+') this.resizeSelected(0.5);
     else if (k === 'f') this.flipSelected();
     else if (k === 'n') this.pinSelected();
-    else if (k === 'r') this.toggleRopeTool();
+    else if (k === 'r') this.toggleRopeTool('rope');
+    else if (k === 'b') this.toggleRopeTool('belt');
     else if (k === 't') this.toggleGhost();
     else if (k === 'g') this.toggleSnap();
     else if (k === 'h' || k === '?') this.showHelp();
@@ -1285,33 +1407,53 @@ export class Game {
     const wrap = $('bin-items');
     wrap.innerHTML = '';
     this.binEls.clear();
-    const types: (PartType | 'rope')[] = this.sandbox
-      ? [...BIN_ORDER, 'rope']
-      : [...BIN_ORDER.filter((t) => (this.bin[t] ?? 0) > 0), ...((this.bin.rope ?? 0) > 0 ? ['rope' as const] : [])];
-    for (const type of types) {
-      const el = document.createElement('button');
-      el.className = 'bin-item';
-      const cv = document.createElement('canvas');
-      cv.width = 144;
-      cv.height = 104;
-      drawIcon(cv, type);
-      const label = document.createElement('span');
-      label.textContent = type === 'rope' ? 'Rope' : PART_DEFS[type].name;
-      const count = document.createElement('span');
-      count.className = 'count';
-      el.append(cv, label, count);
-      el.addEventListener('pointerenter', () => this.showInfo(type));
-      if (type === 'rope') el.onclick = () => this.toggleRopeTool();
-      else {
-        el.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          this.beginBinDrag(type, e);
-        });
+    const has = (t: PartType | Link) => this.sandbox || (this.bin[t] ?? 0) > 0;
+    // links live with the category they belong to
+    const groups: { title: Category; types: (PartType | Link)[] }[] = (
+      ['Balls', 'Building', 'Contraptions', 'Power'] as Category[]
+    ).map((title) => ({
+      title,
+      types: [
+        ...BIN_ORDER.filter((t) => PART_DEFS[t].category === title),
+        ...(title === 'Building' ? (['rope'] as const) : title === 'Power' ? (['belt'] as const) : []),
+      ].filter(has),
+    }));
+    let total = 0;
+    const showHeadings = groups.filter((g) => g.types.length).length > 1;
+    for (const group of groups) {
+      if (!group.types.length) continue;
+      if (showHeadings) {
+        const h = document.createElement('div');
+        h.className = 'bin-heading';
+        h.textContent = group.title;
+        wrap.append(h);
       }
-      wrap.append(el);
-      this.binEls.set(type, el);
+      for (const type of group.types) {
+        total++;
+        const el = document.createElement('button');
+        el.className = 'bin-item';
+        const cv = document.createElement('canvas');
+        cv.width = 144;
+        cv.height = 104;
+        drawIcon(cv, type);
+        const label = document.createElement('span');
+        label.textContent = type === 'rope' ? 'Rope' : type === 'belt' ? 'Drive Belt' : PART_DEFS[type].name;
+        const count = document.createElement('span');
+        count.className = 'count';
+        el.append(cv, label, count);
+        el.addEventListener('pointerenter', () => this.showInfo(type));
+        if (type === 'rope' || type === 'belt') el.onclick = () => this.toggleRopeTool(type);
+        else {
+          el.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            this.beginBinDrag(type, e);
+          });
+        }
+        wrap.append(el);
+        this.binEls.set(type, el);
+      }
     }
-    if (!types.length) wrap.innerHTML = '<p style="color:var(--muted);font-size:13px;grid-column:1/-1">No parts this time.</p>';
+    if (!total) wrap.innerHTML = '<p style="color:var(--muted);font-size:13px;grid-column:1/-1">No parts this time.</p>';
   }
 
   private showMulti(n: number) {
@@ -1319,9 +1461,11 @@ export class Game {
       <div style="margin-top:6px"><kbd>Q</kbd><kbd>E</kbd> rotate group &nbsp;<kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate &nbsp;<kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste &nbsp;<kbd>Del</kbd> remove</div>`;
   }
 
-  private showInfo(type: PartType | 'rope' | null) {
+  private showInfo(type: PartType | Link | null) {
     const el = $('info');
-    if (type === 'rope') {
+    if (type === 'belt') {
+      el.innerHTML = `<b>Drive Belt</b>Carries power: pick it, then click two hubs (motor, mouse motor, gear or conveyor roller). Both ends turn the same way. <kbd>B</kbd>`;
+    } else if (type === 'rope') {
       el.innerHTML = `<b>Rope</b>Ties two things together. Pick it, click the first thing, optionally a pulley, then the second thing. <kbd>R</kbd>`;
     } else if (type) {
       const d = PART_DEFS[type];
@@ -1358,10 +1502,10 @@ export class Game {
       ? `${this.level.title}<small>puzzle ${this.levelIndex + 1} of ${LEVELS.length}</small>`
       : `Free Build<small>everything unlimited</small>`;
     for (const [type, el] of this.binEls) {
-      const n = this.available(type as PartType | 'rope');
+      const n = this.available(type as PartType | Link);
       el.querySelector('.count')!.textContent = n === Infinity ? '' : `×${n}`;
       el.classList.toggle('empty', n <= 0);
-      el.classList.toggle('active', type === 'rope' && !!this.ropeTool);
+      el.classList.toggle('active', this.ropeTool?.kind === type);
     }
     const sel = this.selected && this.part(this.selected);
     const many = this.selParts();
@@ -1376,7 +1520,18 @@ export class Game {
     $('btn-pin').classList.toggle('hidden', !(defs.some((d) => d.dynamic) && this.sandbox));
     $('btn-pin').classList.toggle('on', many.length > 0 && many.filter((p) => PART_DEFS[p.type].dynamic).every((p) => p.pinned));
     if (multi) this.showMulti(many.length);
-    else this.showInfo(sel ? sel.type : this.ropeTool || this.selectedRope ? 'rope' : null);
+    else
+      this.showInfo(
+        sel
+          ? sel.type
+          : this.ropeTool
+            ? this.ropeTool.kind
+            : this.selectedRope
+              ? this.belts.some((b) => b.id === this.selectedRope)
+                ? 'belt'
+                : 'rope'
+              : null,
+      );
     this.updateGoals();
   }
 
@@ -1463,8 +1618,9 @@ export class Game {
         <dt>Drag / right-click</dt><dd>Move a part / send it back to the bin</dd>
         <dt><kbd>Q</kbd> <kbd>E</kbd> or wheel</dt><dd>Rotate 15° (hold <kbd>Shift</kbd> for 5°) — or drag the blue knob</dd>
         <dt><kbd>−</kbd> <kbd>=</kbd></dt><dd>Shrink / grow walls, belts and trampolines — or drag the yellow knobs</dd>
-        <dt><kbd>F</kbd></dt><dd>Flip conveyors, fans and teeter-totters</dd>
-        <dt><kbd>R</kbd></dt><dd>Rope tool: click A, (optional pulley), then B</dd>
+        <dt><kbd>F</kbd></dt><dd>Flip fans, motors, see-saws, mousetraps, ramps…</dd>
+        <dt><kbd>R</kbd></dt><dd>Rope tool: click an attach point, (optionally a pulley), then another</dd>
+        <dt><kbd>B</kbd></dt><dd>Drive belt tool: click two hubs (motor, gear, conveyor roller)</dd>
         <dt><kbd>N</kbd></dt><dd>Pin a loose part in place (Free Build)</dd>
         <dt>Arrows</dt><dd>Nudge ¼ square (<kbd>Shift</kbd> for 1)</dd>
         <dt>Drag empty space</dt><dd>Box-select (hold <kbd>Shift</kbd> to add); <kbd>Shift</kbd>-click toggles a part</dd>
@@ -1510,9 +1666,36 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
 }
 
 /** draws a part into a bin icon by building it in a throwaway world */
-function drawIcon(cv: HTMLCanvasElement, type: PartType | 'rope') {
+function drawIcon(cv: HTMLCanvasElement, type: PartType | Link) {
   const g = cv.getContext('2d')!;
   g.clearRect(0, 0, cv.width, cv.height);
+  if (type === 'belt') {
+    g.translate(cv.width / 2, cv.height / 2);
+    const path = () => {
+      g.beginPath();
+      g.arc(-34, 8, 14, Math.PI / 2, (Math.PI * 3) / 2);
+      g.lineTo(34, -18);
+      g.arc(34, -8, 10, -Math.PI / 2, Math.PI / 2);
+      g.closePath();
+    };
+    path();
+    g.lineWidth = 10;
+    g.strokeStyle = '#141722';
+    g.stroke();
+    g.lineWidth = 6;
+    g.strokeStyle = '#3b3f4c';
+    g.stroke();
+    for (const [x, y, r] of [
+      [-34, 8, 9],
+      [34, -8, 6],
+    ]) {
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fillStyle = '#aeb7c2';
+      g.fill();
+    }
+    return;
+  }
   if (type === 'rope') {
     g.translate(cv.width / 2, cv.height / 2);
     g.lineCap = 'round';

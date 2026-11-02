@@ -14,6 +14,7 @@ describe('levels', () => {
         const scene = {
           parts: [...level.scene.parts, ...level.solution.parts],
           ropes: [...level.scene.ropes, ...level.solution.ropes],
+          belts: [...(level.scene.belts ?? []), ...(level.solution.belts ?? [])],
         };
         const r = solveCheck(scene, level.goals, 30);
         expect(r.won).toBe(true);
@@ -23,6 +24,7 @@ describe('levels', () => {
         const sim = new Sim({
           parts: [...level.scene.parts, ...level.solution.parts],
           ropes: [...level.scene.ropes, ...level.solution.ropes],
+          belts: [...(level.scene.belts ?? []), ...(level.solution.belts ?? [])],
         });
         expect([...findOverlaps(sim)]).toEqual([]);
       });
@@ -31,6 +33,7 @@ describe('levels', () => {
         const used: Record<string, number> = {};
         for (const p of level.solution.parts) used[p.type] = (used[p.type] ?? 0) + 1;
         if (level.solution.ropes.length) used.rope = level.solution.ropes.length;
+        if (level.solution.belts?.length) used.belt = level.solution.belts.length;
         for (const [type, n] of Object.entries(used)) {
           expect(level.bin[type as keyof typeof level.bin] ?? 0, `${type}`).toBeGreaterThanOrEqual(n);
         }

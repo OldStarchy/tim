@@ -4,18 +4,36 @@ export type PartType =
   | 'bowling'
   | 'basketball'
   | 'baseball'
+  | 'superball'
+  | 'steelball'
+  | 'beachball'
   | 'balloon'
   | 'crate'
   | 'domino'
   | 'bucket'
+  | 'plank'
+  | 'anvil'
+  | 'tnt'
   | 'wall'
-  | 'conveyor'
+  | 'wedge'
+  | 'curve'
+  | 'funnel'
+  | 'glass'
+  | 'hook'
+  | 'pulley'
   | 'trampoline'
   | 'seesaw'
   | 'needle'
   | 'fan'
-  | 'hook'
-  | 'pulley';
+  | 'bumper'
+  | 'bell'
+  | 'mousetrap'
+  | 'scissors'
+  | 'magnet'
+  | 'conveyor'
+  | 'motor'
+  | 'mouse'
+  | 'gear';
 
 export interface Part {
   id: string;
@@ -37,14 +55,28 @@ export interface Rope {
   id: string;
   a: string;
   b: string;
+  /** which of the part's rope anchors (e.g. see-saw left/right end); default 0 */
+  aEnd?: number;
+  bEnd?: number;
   /** optional pulley part id the rope runs over */
   via?: string;
+  locked?: boolean;
+}
+
+/** drive belt between two powered parts' hubs */
+export interface Belt {
+  id: string;
+  a: string;
+  b: string;
+  aEnd?: number;
+  bEnd?: number;
   locked?: boolean;
 }
 
 export interface Scene {
   parts: Part[];
   ropes: Rope[];
+  belts?: Belt[];
 }
 
 export interface Zone {
@@ -58,9 +90,11 @@ export type Goal =
   | { kind: 'inBucket'; target: string; bucket: string; label: string }
   | { kind: 'popped'; target: string; label: string }
   | { kind: 'inZone'; target: string; zone: Zone; label: string }
-  | { kind: 'toppled'; targets: string[]; label: string };
+  | { kind: 'toppled'; targets: string[]; label: string }
+  | { kind: 'rung'; target: string; label: string };
 
-export type Bin = Partial<Record<PartType | 'rope', number>>;
+export type Link = 'rope' | 'belt';
+export type Bin = Partial<Record<PartType | Link, number>>;
 
 export interface Level {
   id: string;
@@ -84,5 +118,7 @@ export function newId(prefix = 'p'): string {
 }
 
 export function cloneScene(s: Scene): Scene {
-  return JSON.parse(JSON.stringify(s));
+  const c = JSON.parse(JSON.stringify(s)) as Scene;
+  c.belts ??= [];
+  return c;
 }
