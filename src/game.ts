@@ -23,8 +23,14 @@ import * as store from './storage';
 type Mode = 'edit' | 'run';
 
 interface Drag {
-  kind: 'move' | 'new' | 'rotate' | 'resize';
+  kind: 'move' | 'new' | 'rotate' | 'resize' | 'box';
   id: string;
+  /** other selected parts moving along with the grabbed one: start positions */
+  group?: { id: string; x: number; y: number }[];
+  /** marquee start (world) */
+  bx?: number;
+  by?: number;
+  additive?: boolean;
   ox: number;
   oy: number;
   end?: -1 | 1;
@@ -65,7 +71,10 @@ export class Game {
   won = false;
   holdTime = 0;
 
-  selected: string | null = null;
+  /** current selection; most single-part tools act when exactly one part is selected */
+  sel = new Set<string>();
+  box: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  private clipboard: Scene | null = null;
   selectedRope: string | null = null;
   hover: { x: number; y: number } | null = null;
   drag: Drag | null = null;
@@ -162,6 +171,18 @@ export class Game {
   /** trajectory preview would give puzzles away, so it's a Free Build tool */
   get previewOn() {
     return this.ghost && this.sandbox;
+  }
+
+  get selected(): string | null {
+    return this.sel.size === 1 ? [...this.sel][0] : null;
+  }
+  set selected(id: string | null) {
+    this.sel = new Set(id ? [id] : []);
+  }
+
+  /** selected parts the player may edit */
+  private selParts(): Part[] {
+    return this.scene.parts.filter((p) => this.sel.has(p.id) && !p.locked);
   }
 
   get sandbox() {
@@ -428,10 +449,23 @@ export class Game {
     g.strokeStyle = '#2d3850';
     g.strokeRect(0, 0, BOARD_W, BOARD_H);
 
-    if (this.mode === 'edit' && this.selected) {
-      const p = this.part(this.selected);
-      if (p && !p.locked) drawSelection(g, p, this.cam.scale, this.bad.has(p.id));
-      else if (p) this.tintPart(p.id, 'rgba(255,214,102,0.25)');
+    if (this.mode === 'edit' && this.sel.size) {
+      const single = this.sel.size === 1;
+      for (const id of this.sel) {
+        const p = this.part(id);
+        if (p && !p.locked) drawSelection(g, p, this.cam.scale, this.bad.has(p.id), single);
+        else if (p) this.tintPart(p.id, 'rgba(255,214,102,0.25)');
+      }
+    }
+    if (this.box) {
+      const b = this.box;
+      g.fillStyle = 'rgba(127,196,240,0.12)';
+      g.fillRect(Math.min(b.x0, b.x1), Math.min(b.y0, b.y1), Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
+      g.setLineDash([6 / this.cam.scale, 4 / this.cam.scale]);
+      g.lineWidth = 1.5 / this.cam.scale;
+      g.strokeStyle = '#7fc4f0';
+      g.strokeRect(Math.min(b.x0, b.x1), Math.min(b.y0, b.y1), Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
+      g.setLineDash([]);
     }
     if (this.mode === 'run' && this.paused) {
       g.fillStyle = 'rgba(255,214,102,0.9)';
@@ -535,7 +569,7 @@ export class Game {
   }
 
   private afterHistory() {
-    if (this.selected && !this.part(this.selected)) this.selected = null;
+    this.sel = new Set([...this.sel].filter((id) => this.part(id)));
     this.selectedRope = null;
     this.rebuild();
     this.persist();
@@ -562,29 +596,136 @@ export class Game {
       this.selectedRope = null;
       return;
     }
-    const p = this.selected && this.part(this.selected);
-    if (!p || p.locked) return;
-    this.mutate(() => (this.scene.parts = this.scene.parts.filter((x) => x !== p)));
-    this.selected = null;
+    const doomed = new Set(this.selParts().map((p) => p.id));
+    if (!doomed.size) return;
+    this.mutate(() => (this.scene.parts = this.scene.parts.filter((x) => !doomed.has(x.id))));
+    this.sel.clear();
     this.updateUI();
   }
 
+  /** parts + the ropes running entirely between them */
+  private selectionAsScene(): Scene | null {
+    const parts = this.selParts();
+    if (!parts.length) return null;
+    const ids = new Set(parts.map((p) => p.id));
+    const ropes = this.scene.ropes.filter((r) => !r.locked && ids.has(r.a) && ids.has(r.b) && (!r.via || ids.has(r.via)));
+    return cloneScene({ parts, ropes });
+  }
+
+  /** adds a copy of `src` offset by (dx, dy) if the bin allows it; selects the copies */
+  private pasteScene(src: Scene, dx: number, dy: number): boolean {
+    const need: Record<string, number> = {};
+    for (const p of src.parts) need[p.type] = (need[p.type] ?? 0) + 1;
+    if (src.ropes.length) need.rope = src.ropes.length;
+    for (const [type, n] of Object.entries(need)) {
+      if (this.available(type as PartType | 'rope') < n) {
+        this.toast(`Not enough ${type === 'rope' ? 'ropes' : PART_DEFS[type as PartType].name.toLowerCase() + 's'} left in the bin`);
+        return false;
+      }
+    }
+    const map = new Map<string, string>();
+    const parts = src.parts.map((p) => {
+      const id = newId();
+      map.set(p.id, id);
+      return { ...p, id, locked: false, x: p.x + dx, y: p.y + dy };
+    });
+    const ropes = src.ropes.map((r) => ({
+      ...r,
+      id: newId('r'),
+      locked: false,
+      a: map.get(r.a)!,
+      b: map.get(r.b)!,
+      via: r.via ? map.get(r.via) : undefined,
+    }));
+    this.mutate(() => {
+      this.scene.parts.push(...parts);
+      this.scene.ropes.push(...ropes);
+    });
+    this.sel = new Set(parts.map((p) => p.id));
+    this.selectedRope = null;
+    this.updateUI();
+    return true;
+  }
+
   duplicateSelected() {
-    const p = this.selected && this.part(this.selected);
-    if (!p || p.locked || this.available(p.type) <= 0) return;
-    const copy: Part = { ...p, id: newId(), x: Math.min(BOARD_W - 1, p.x + 1), y: Math.max(1, p.y - 1) };
-    this.mutate(() => this.scene.parts.push(copy));
-    this.selected = copy.id;
+    const src = this.selectionAsScene();
+    if (!src) return;
+    // nearest offset where the copy fits on the board without overlapping anything
+    const xs = src.parts.map((p) => p.x);
+    const ys = src.parts.map((p) => p.y);
+    const w = Math.max(...xs) - Math.min(...xs) + 1.5;
+    const h = Math.max(...ys) - Math.min(...ys) + 1.5;
+    const tries: [number, number][] = [[1, -1], [w, 0], [-w, 0], [0, h], [0, -h], [w, h], [-w, -h], [w, -h], [-w, h]];
+    for (const [dx, dy] of tries) {
+      const sx = this.snapV(dx, true);
+      const sy = this.snapV(dy, true);
+      const moved = src.parts.map((p) => ({ ...p, id: `dup-${p.id}`, x: p.x + sx, y: p.y + sy }));
+      if (moved.some((p) => p.x < 0 || p.x > BOARD_W || p.y < 0 || p.y > BOARD_H)) continue;
+      const bad = findOverlaps(new Sim({ parts: [...this.scene.parts, ...moved], ropes: [] }));
+      if (moved.some((p) => bad.has(p.id))) continue;
+      this.pasteScene(src, sx, sy);
+      return;
+    }
+    this.pasteScene(src, 1, -1);
+  }
+
+  copySelected() {
+    const src = this.selectionAsScene();
+    if (!src) return;
+    this.clipboard = src;
+    this.toast(`Copied ${src.parts.length} part${src.parts.length > 1 ? 's' : ''}`);
+  }
+
+  cutSelected() {
+    const src = this.selectionAsScene();
+    if (!src) return;
+    this.clipboard = src;
+    this.deleteSelected();
+  }
+
+  paste() {
+    const src = this.clipboard;
+    if (!src || this.mode !== 'edit') return;
+    // centre the pasted group on the mouse if it's over the board, else offset from the original
+    const cx = src.parts.reduce((t, p) => t + p.x, 0) / src.parts.length;
+    const cy = src.parts.reduce((t, p) => t + p.y, 0) / src.parts.length;
+    const h = this.hover;
+    const onBoard = h && h.x >= 0 && h.x <= BOARD_W && h.y >= 0 && h.y <= BOARD_H;
+    const dx = onBoard ? this.snapV(h!.x - cx, true) : 1;
+    const dy = onBoard ? this.snapV(h!.y - cy, true) : -1;
+    this.pasteScene(src, dx, dy);
+  }
+
+  selectAll() {
+    if (this.mode !== 'edit') return;
+    this.sel = new Set(this.scene.parts.filter((p) => !p.locked).map((p) => p.id));
+    this.selectedRope = null;
     this.updateUI();
   }
 
   private editSelected(fn: (p: Part) => void) {
-    const p = this.selected && this.part(this.selected);
-    if (!p || p.locked || this.mode !== 'edit') return;
-    this.mutate(() => fn(p));
+    const parts = this.selParts();
+    if (!parts.length || this.mode !== 'edit') return;
+    this.mutate(() => parts.forEach(fn));
   }
 
   rotateSelected(delta: number) {
+    const parts = this.selParts();
+    if (parts.length > 1) {
+      // turn the whole group about its centre
+      const cx = parts.reduce((t, p) => t + p.x, 0) / parts.length;
+      const cy = parts.reduce((t, p) => t + p.y, 0) / parts.length;
+      const c = Math.cos(delta);
+      const sn = Math.sin(delta);
+      this.editSelected((p) => {
+        const dx = p.x - cx;
+        const dy = p.y - cy;
+        p.x = cx + dx * c - dy * sn;
+        p.y = cy + dx * sn + dy * c;
+        if (PART_DEFS[p.type].rotate) p.angle = normAngle(p.angle + delta);
+      });
+      return;
+    }
     this.editSelected((p) => {
       if (!PART_DEFS[p.type].rotate) return;
       p.angle = normAngle(p.angle + delta);
@@ -610,8 +751,11 @@ export class Game {
       this.toast('Pinning is available in Free Build');
       return;
     }
+    // pin all unless they're all pinned already
+    const dyn = this.selParts().filter((p) => PART_DEFS[p.type].dynamic);
+    const pin = !dyn.every((p) => p.pinned);
     this.editSelected((p) => {
-      if (PART_DEFS[p.type].dynamic) p.pinned = !p.pinned;
+      if (PART_DEFS[p.type].dynamic) p.pinned = pin;
     });
   }
 
@@ -746,9 +890,9 @@ export class Game {
     c.addEventListener(
       'wheel',
       (e) => {
-        if (this.mode !== 'edit' || !this.selected) return;
-        const p = this.part(this.selected);
-        if (!p || p.locked || !PART_DEFS[p.type].rotate) return;
+        if (this.mode !== 'edit' || !this.selParts().length) return;
+        const p = this.selected ? this.part(this.selected) : null;
+        if (p && !PART_DEFS[p.type].rotate) return;
         e.preventDefault();
         const step = e.shiftKey ? Math.PI / 36 : ANGLE_SNAP;
         this.rotateSelected(Math.sign(e.deltaY || e.deltaX) * step);
@@ -761,7 +905,8 @@ export class Game {
       const w = this.eventWorld(e);
       const p = this.hitTest(w.x, w.y, (p) => !p.locked);
       if (p) {
-        this.selected = p.id;
+        // right-clicking part of a multi-selection sends the whole group back
+        if (!this.sel.has(p.id)) this.selected = p.id;
         this.deleteSelected();
       }
     });
@@ -783,20 +928,41 @@ export class Game {
       this.canvas.setPointerCapture(e.pointerId);
       return;
     }
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     const p = this.hitTest(w.x, w.y);
     if (p) {
-      this.selected = p.id;
       this.selectedRope = null;
+      if (additive) {
+        // shift/ctrl-click toggles a part in or out of the selection
+        if (this.sel.has(p.id)) this.sel.delete(p.id);
+        else if (!p.locked) this.sel.add(p.id);
+        this.sel = new Set([...this.sel].filter((id) => !this.part(id)?.locked));
+        this.updateUI();
+        return;
+      }
+      if (!this.sel.has(p.id) || p.locked) this.selected = p.id;
       if (!p.locked) {
-        this.drag = { kind: 'move', id: p.id, ox: w.x - p.x, oy: w.y - p.y, before, moved: false, sx: e.clientX, sy: e.clientY };
+        const group = this.selParts()
+          .filter((q) => q.id !== p.id)
+          .map((q) => ({ id: q.id, x: q.x, y: q.y }));
+        this.drag = { kind: 'move', id: p.id, ox: w.x - p.x, oy: w.y - p.y, group, before, moved: false, sx: e.clientX, sy: e.clientY };
         this.canvas.setPointerCapture(e.pointerId);
       }
       this.updateUI();
       return;
     }
     const r = this.hitRope(w.x, w.y);
-    this.selected = null;
-    this.selectedRope = r ? r.id : null;
+    if (r) {
+      this.sel.clear();
+      this.selectedRope = r.id;
+      this.updateUI();
+      return;
+    }
+    // empty space: start a box selection
+    if (!additive) this.sel.clear();
+    this.selectedRope = null;
+    this.drag = { kind: 'box', id: '', ox: 0, oy: 0, bx: w.x, by: w.y, additive, before, moved: false, sx: e.clientX, sy: e.clientY };
+    this.canvas.setPointerCapture(e.pointerId);
     this.updateUI();
   }
 
@@ -832,12 +998,29 @@ export class Game {
     }
     if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 3) return;
     d.moved = true;
+    if (d.kind === 'box') {
+      this.box = { x0: d.bx!, y0: d.by!, x1: w.x, y1: w.y };
+      return;
+    }
     const p = this.part(d.id);
     if (!p) return;
     const free = e.altKey;
     if (d.kind === 'move' || d.kind === 'new') {
+      const x0 = p.x;
+      const y0 = p.y;
       p.x = free ? w.x - d.ox : this.snapV(w.x - d.ox);
       p.y = free ? w.y - d.oy : this.snapV(w.y - d.oy);
+      if (d.group?.length) {
+        // the grabbed part leads; the rest keep their offsets from it
+        const lead = d.group.length ? { dx: p.x - x0, dy: p.y - y0 } : null;
+        for (const gp of d.group) {
+          const q = this.part(gp.id);
+          if (q && lead) {
+            q.x += lead.dx;
+            q.y += lead.dy;
+          }
+        }
+      }
     } else if (d.kind === 'rotate') {
       let a = Math.atan2(w.y - p.y, w.x - p.x) + Math.PI / 2;
       const step = e.shiftKey ? Math.PI / 36 : ANGLE_SNAP;
@@ -863,7 +1046,27 @@ export class Game {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
+    if (d.kind === 'box') {
+      const b = this.box;
+      this.box = null;
+      if (b) {
+        const x0 = Math.min(b.x0, b.x1);
+        const x1 = Math.max(b.x0, b.x1);
+        const y0 = Math.min(b.y0, b.y1);
+        const y1 = Math.max(b.y0, b.y1);
+        const inside = this.scene.parts.filter((p) => !p.locked && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1);
+        if (!d.additive) this.sel.clear();
+        for (const p of inside) this.sel.add(p.id);
+      }
+      this.updateUI();
+      return;
+    }
     const p = this.part(d.id);
+    if (d.kind === 'move' && !d.moved && d.group?.length) {
+      this.selected = d.id;
+      this.updateUI();
+      return;
+    }
     if (d.kind === 'new' && p) {
       const r = this.canvas.getBoundingClientRect();
       const overCanvas = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
@@ -880,13 +1083,16 @@ export class Game {
     if (d.kind === 'move' && p) {
       const w = this.eventWorld(e);
       if (w.x < -0.5 || w.x > BOARD_W + 0.5 || w.y < -0.5 || w.y > BOARD_H + 0.5) {
-        // dragged off the board: back to the bin
-        this.scene.parts = this.scene.parts.filter((x) => x !== p);
-        this.selected = null;
+        // dragged off the board: back to the bin (the whole group, if it was one)
+        const gone = new Set([p.id, ...(d.group ?? []).map((g) => g.id)]);
+        this.scene.parts = this.scene.parts.filter((x) => !gone.has(x.id));
+        this.pruneRopes();
+        this.sel.clear();
       }
     }
     this.rebuild();
-    if (p && this.bad.has(p.id) && d.moved) this.toast('That spot overlaps something');
+    const moved = [d.id, ...(d.group ?? []).map((g) => g.id)];
+    if (d.moved && moved.some((id) => this.bad.has(id))) this.toast('That spot overlaps something');
     this.commit(d.before);
     this.updateUI();
   }
@@ -920,6 +1126,10 @@ export class Game {
     else if (ctrl && k === 'z' && !e.shiftKey) this.undo();
     else if ((ctrl && k === 'y') || (ctrl && e.shiftKey && k === 'z')) this.redo();
     else if (ctrl && k === 'd') this.duplicateSelected();
+    else if (ctrl && k === 'c') this.copySelected();
+    else if (ctrl && k === 'x') this.cutSelected();
+    else if (ctrl && k === 'v') this.paste();
+    else if (ctrl && k === 'a') this.selectAll();
     else if (ctrl) handled = false;
     else if (k === 'p') this.togglePause();
     else if (k === 's') this.stepOnce();
@@ -927,7 +1137,8 @@ export class Game {
     else if (k === '.' || k === '>') this.setSpeed(this.speedIdx + 1);
     else if (k === 'escape') {
       this.ropeTool = null;
-      this.selected = null;
+      this.sel.clear();
+      this.box = null;
       this.selectedRope = null;
       this.updateUI();
     } else if (k === 'delete' || k === 'backspace') this.deleteSelected();
@@ -1103,6 +1314,11 @@ export class Game {
     if (!types.length) wrap.innerHTML = '<p style="color:var(--muted);font-size:13px;grid-column:1/-1">No parts this time.</p>';
   }
 
+  private showMulti(n: number) {
+    $('info').innerHTML = `<b>${n} parts selected</b>Drag any of them to move the group.
+      <div style="margin-top:6px"><kbd>Q</kbd><kbd>E</kbd> rotate group &nbsp;<kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate &nbsp;<kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste &nbsp;<kbd>Del</kbd> remove</div>`;
+  }
+
   private showInfo(type: PartType | 'rope' | null) {
     const el = $('info');
     if (type === 'rope') {
@@ -1148,15 +1364,19 @@ export class Game {
       el.classList.toggle('active', type === 'rope' && !!this.ropeTool);
     }
     const sel = this.selected && this.part(this.selected);
-    const editable = !run && ((sel && !sel.locked) || (this.selectedRope && !this.scene.ropes.find((r) => r.id === this.selectedRope)?.locked));
+    const many = this.selParts();
+    const multi = many.length > 1;
+    const editable =
+      !run && (many.length > 0 || (this.selectedRope && !this.scene.ropes.find((r) => r.id === this.selectedRope)?.locked));
     $('sel-tools').classList.toggle('hidden', !editable);
-    const def = sel ? PART_DEFS[sel.type] : null;
-    $('btn-rotl').classList.toggle('hidden', !def?.rotate);
-    $('btn-rotr').classList.toggle('hidden', !def?.rotate);
-    $('btn-flip').classList.toggle('hidden', !def?.flip);
-    $('btn-pin').classList.toggle('hidden', !(def?.dynamic && this.sandbox));
-    $('btn-pin').classList.toggle('on', !!sel && !!sel.pinned);
-    this.showInfo(sel ? sel.type : this.ropeTool || this.selectedRope ? 'rope' : null);
+    const defs = many.map((p) => PART_DEFS[p.type]);
+    $('btn-rotl').classList.toggle('hidden', !(multi || defs.some((d) => d.rotate)));
+    $('btn-rotr').classList.toggle('hidden', !(multi || defs.some((d) => d.rotate)));
+    $('btn-flip').classList.toggle('hidden', !defs.some((d) => d.flip));
+    $('btn-pin').classList.toggle('hidden', !(defs.some((d) => d.dynamic) && this.sandbox));
+    $('btn-pin').classList.toggle('on', many.length > 0 && many.filter((p) => PART_DEFS[p.type].dynamic).every((p) => p.pinned));
+    if (multi) this.showMulti(many.length);
+    else this.showInfo(sel ? sel.type : this.ropeTool || this.selectedRope ? 'rope' : null);
     this.updateGoals();
   }
 
@@ -1247,6 +1467,9 @@ export class Game {
         <dt><kbd>R</kbd></dt><dd>Rope tool: click A, (optional pulley), then B</dd>
         <dt><kbd>N</kbd></dt><dd>Pin a loose part in place (Free Build)</dd>
         <dt>Arrows</dt><dd>Nudge ¼ square (<kbd>Shift</kbd> for 1)</dd>
+        <dt>Drag empty space</dt><dd>Box-select (hold <kbd>Shift</kbd> to add); <kbd>Shift</kbd>-click toggles a part</dd>
+        <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Select all your parts</dd>
+        <dt><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></dt><dd>Copy / cut / paste (pastes at the mouse)</dd>
         <dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>Duplicate</dd>
         <dt><kbd>Del</kbd></dt><dd>Remove selected part or rope</dd>
         <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></dt><dd>Undo / redo</dd>

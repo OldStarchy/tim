@@ -235,7 +235,7 @@ export function partHandles(p: Part, scale: number): Handles {
   return h;
 }
 
-export function drawSelection(g: CanvasRenderingContext2D, p: Part, scale: number, bad: boolean) {
+export function drawSelection(g: CanvasRenderingContext2D, p: Part, scale: number, bad: boolean, handles = true) {
   const def = PART_DEFS[p.type];
   const b = def.bounds(p);
   const px = 1 / scale;
@@ -252,13 +252,14 @@ export function drawSelection(g: CanvasRenderingContext2D, p: Part, scale: numbe
     g.stroke();
   } else g.strokeRect(b.x0 - pad, b.y0 - pad, b.x1 - b.x0 + pad * 2, b.y1 - b.y0 + pad * 2);
   g.setLineDash([]);
-  if (def.rotate) {
+  if (def.rotate && handles) {
     g.beginPath();
     g.moveTo(0, b.y0 - pad);
     g.lineTo(0, b.y0 - 22 * px);
     g.stroke();
   }
   g.restore();
+  if (!handles) return;
   const hs = partHandles(p, scale);
   const knob = (x: number, y: number, color: string) => {
     g.beginPath();
