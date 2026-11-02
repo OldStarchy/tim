@@ -1,0 +1,22 @@
+{
+  "name": "tim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A modern web tribute to The Incredible Machine",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "planck": "1.5.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

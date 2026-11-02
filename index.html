@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>TIM — a tribute to The Incredible Machine</title>
+    <meta name="description" content="Build wacky contraptions from balls, belts, balloons and trampolines. A modern browser tribute to The Incredible Machine." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23f08a3c' stroke='%23141722' stroke-width='3'/><path d='M3 16h26M16 3v26' stroke='%23141722' stroke-width='2'/></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet" />
+    
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <button id="btn-menu" class="brand" title="Puzzles (M)"><span class="logo">TIM</span><span class="sub">puzzles</span></button>
+        <div id="level-title"></div>
+        <div class="spacer"></div>
+        <div class="group hidden" id="sel-tools">
+          <button id="btn-rotl" class="icon" title="Rotate left (Q)">⟲</button>
+          <button id="btn-rotr" class="icon" title="Rotate right (E)">⟳</button>
+          <button id="btn-flip" title="Flip (F)">Flip</button>
+          <button id="btn-pin" class="hidden" title="Pin in place (N)">Pin</button>
+          <button id="btn-del" class="icon" title="Remove (Del)">🗑</button>
+        </div>
+        <div class="group" id="edit-tools">
+          <button id="btn-undo" class="icon" title="Undo (Ctrl+Z)">↶</button>
+          <button id="btn-redo" class="icon" title="Redo (Ctrl+Y)">↷</button>
+          <button id="btn-snap" class="toggle" title="Snap to grid (G)">Snap</button>
+          <button id="btn-ghost" class="toggle" title="Trajectory preview (T)">Preview</button>
+          <button id="btn-clear" title="Remove all your parts">Clear</button>
+        </div>
+        <div class="group" id="run-tools">
+          <button id="btn-pause" class="icon" title="Pause (P)">❚❚</button>
+          <button id="btn-stepf" class="icon" title="Step one frame (S)">⏭</button>
+          <button id="btn-slower" class="icon" title="Slower (,)">−</button>
+          <span id="speed">1×</span>
+          <button id="btn-faster" class="icon" title="Faster (.)">+</button>
+        </div>
+        <button id="btn-run" class="primary" title="Start / reset (Space)">▶ Start</button>
+        <button id="btn-sound" class="icon" title="Sound">🔊</button>
+        <button id="btn-music" class="icon hidden" title="Music">♪</button>
+        <button id="btn-share" class="hidden" title="Copy a link to this contraption">Share</button>
+        <button id="btn-help" class="icon" title="Controls (H)">?</button>
+      </header>
+      <main>
+        <div id="stage">
+          <div id="goals"></div>
+          <div id="canvas-wrap">
+            <canvas id="board"></canvas>
+            <div id="toast"></div>
+          </div>
+        </div>
+        <aside id="bin">
+          <h2>Parts</h2>
+          <div id="bin-items"></div>
+          <div id="info"></div>
+        </aside>
+      </main>
+    </div>
+
+    <div id="overlay" class="hidden">
+      <div class="panel" id="panel"></div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
