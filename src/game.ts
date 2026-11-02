@@ -114,9 +114,19 @@ export class Game {
     this.scene = cloneScene(lvl.scene);
     if (saved) {
       // only player parts are persisted; locked ones always come from the level
+      // drop anything the (possibly since-changed) level no longer allows
       const ids = new Set(this.scene.parts.map((p) => p.id));
-      for (const p of saved.parts) if (!ids.has(p.id) && PART_DEFS[p.type]) this.scene.parts.push(p);
-      for (const r of saved.ropes) if (!r.locked) this.scene.ropes.push(r);
+      const left: Bin = { ...lvl.bin };
+      for (const p of saved.parts) {
+        if (ids.has(p.id) || !PART_DEFS[p.type] || !((left[p.type] ?? 0) > 0)) continue;
+        left[p.type]!--;
+        this.scene.parts.push({ ...p, locked: false });
+      }
+      for (const r of saved.ropes) {
+        if (r.locked || !((left.rope ?? 0) > 0)) continue;
+        left.rope!--;
+        this.scene.ropes.push(r);
+      }
       this.pruneRopes();
     }
     this.bin = { ...lvl.bin };
