@@ -182,7 +182,7 @@ export function drawRopes(g: CanvasRenderingContext2D, ropes: RopeInst[], highli
 }
 
 /** drive belts: a loop wrapped around two hubs */
-export function drawBelts(g: CanvasRenderingContext2D, belts: BeltInst[], t: number, highlight?: string) {
+export function drawBelts(g: CanvasRenderingContext2D, belts: BeltInst[], highlight?: string) {
   for (const b of belts) {
     if (b.a.removed || b.b.removed) continue;
     const A = driveWorld(b.a.part, b.belt.aEnd);
@@ -206,9 +206,11 @@ export function drawBelts(g: CanvasRenderingContext2D, belts: BeltInst[], t: num
     g.lineWidth = 0.08;
     g.strokeStyle = b.belt.id === highlight ? '#ffd666' : '#3b3f4c';
     g.stroke();
-    // little dashes show it's a moving belt
+    // little dashes show which way it's moving. The loop is traced along the side facing +n first,
+    // which runs opposite to clockwise travel, so a positive (clockwise) speed moves the dashes
+    // backwards along the path: offset = +travel.
     g.setLineDash([0.12, 0.3]);
-    g.lineDashOffset = -t * 3;
+    g.lineDashOffset = b.travel;
     g.lineWidth = 0.03;
     g.strokeStyle = '#7a8296';
     g.stroke();

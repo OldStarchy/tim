@@ -40,6 +40,9 @@ export interface BeltInst {
   belt: Belt;
   a: Inst;
   b: Inst;
+  /** belt surface speed (+ = the hubs turn clockwise) and how far it has moved */
+  speed: number;
+  travel: number;
 }
 
 function anchorsOf(p: Part) {
@@ -210,7 +213,7 @@ export class Sim implements SimApi {
     const b = this.insts.get(belt.b);
     if (!a || !b || a === b) return;
     if (!PART_DEFS[a.part.type].drives || !PART_DEFS[b.part.type].drives) return;
-    this.belts.push({ belt, a, b });
+    this.belts.push({ belt, a, b, speed: 0, travel: 0 });
   }
 
   // ------------------------------------------------------------------ power
@@ -267,6 +270,7 @@ export class Sim implements SimApi {
       if (inst.removed) continue;
       PART_DEFS[inst.part.type].onPower?.(inst, omega.get(inst) ?? 0);
     }
+    for (const bi of this.belts) bi.speed = (omega.get(bi.a) ?? 0) * driveWorld(bi.a.part, bi.belt.aEnd).r;
   }
 
   powerChanged() {
@@ -285,8 +289,11 @@ export class Sim implements SimApi {
     }
     // buckets are padded: things that land inside stay inside
     if (ta?.inst.part.type === 'bucket' || tb?.inst.part.type === 'bucket') c.setRestitution(0.05);
-    if (ta?.role === 'conveyor') c.setTangentSpeed(-((ta.inst.st.speed as number) ?? 0));
-    else if (tb?.role === 'conveyor') c.setTangentSpeed((tb.inst.st.speed as number) ?? 0);
+    // The contact's tangent flips with its normal (which points from fixture A to B), and the
+    // solver measures B's velocity relative to A, so the two flips cancel: the same sign is right
+    // whichever fixture the conveyor is, and on its top or underside.
+    const conv = ta?.role === 'conveyor' ? ta : tb?.role === 'conveyor' ? tb : null;
+    if (conv) c.setTangentSpeed(-((conv.inst.st.speed as number) ?? 0));
   }
 
   private beginContact(c: Contact) {
@@ -377,6 +384,7 @@ export class Sim implements SimApi {
 
     this.world.step(DT, 8, 3);
     this.time += DT;
+    for (const bi of this.belts) bi.travel += bi.speed * DT;
     this.steps++;
 
     // trampoline: throw things back harder than they arrived (capped so nothing runs away)

@@ -529,7 +529,7 @@ export class Game {
     if (this.mode === 'edit' && this.previewOn) drawTrails(g, this.trails);
     const order = this.scene.parts.map((p) => p.id);
     drawParts(g, this.sim, simT, order);
-    drawBelts(g, this.sim.belts, this.mode === 'run' ? this.sim.time : 0, this.selectedRope ?? undefined);
+    drawBelts(g, this.sim.belts, this.selectedRope ?? undefined);
     drawRopes(g, this.sim.ropes, this.selectedRope ?? undefined);
 
     if (this.mode === 'edit') {

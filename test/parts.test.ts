@@ -37,6 +37,33 @@ describe('power train', () => {
     ).toBeLessThan(18.5);
   });
 
+  it('a conveyor pushes every kind of thing the same way, whichever was placed first', () => {
+    for (const [type, y] of [
+      ['crate', 17.22],
+      ['anvil', 17.3],
+      ['plank', 17.6],
+      ['baseball', 17.45],
+    ] as const) {
+      for (const objFirst of [false, true]) {
+        const obj = P(type, 20, y, { id: 'k' });
+        const rest = [P('motor', 10, 14, { id: 'm' }), P('conveyor', 20, 18, { id: 'c', length: 10 })];
+        const { x } = run({ parts: objFirst ? [obj, ...rest] : [...rest, obj], ropes: [], belts: [{ id: 'b', a: 'm', b: 'c' }] }, 0.5);
+        expect(x('k'), `${type}, ${objFirst ? 'placed first' : 'placed second'}`).toBeGreaterThan(20.5);
+      }
+    }
+  });
+
+  it('a drive belt only moves while it is driven, in the hubs’ direction', () => {
+    const scene = (flip: boolean | null): Scene => ({
+      parts: [floor(), ...(flip === null ? [] : [P('motor', 5, 10, { id: 'm', flip })]), P('gear', 12, 10, { id: 'g' }), P('gear', 20, 10, { id: 'g2' })],
+      ropes: [],
+      belts: [{ id: 'b', a: flip === null ? 'g2' : 'm', b: 'g' }],
+    });
+    expect(run(scene(null), 0.5).sim.belts[0].travel).toBe(0);
+    expect(run(scene(false), 0.5).sim.belts[0].travel).toBeGreaterThan(0);
+    expect(run(scene(true), 0.5).sim.belts[0].travel).toBeLessThan(0);
+  });
+
   it('meshing gears reverse direction', () => {
     const scene = conveyorScene(
       [P('motor', 5, 10, { id: 'm' }), P('gear', 10, 10, { id: 'g1', length: 2 }), P('gear', 12, 10, { id: 'g2', length: 2 })],
