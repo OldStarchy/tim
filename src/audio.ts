@@ -66,6 +66,10 @@ const PITCH: Record<string, number> = {
   plank: 160,
   anvil: 50,
   tnt: 110,
+  candle: 300,
+  rocket: 260,
+  cat: 140,
+  rodent: 600,
 };
 
 export function impact(material: string, speed: number) {
@@ -296,5 +300,92 @@ export function squeak() {
     o.start(t);
     o.stop(t + 0.17);
     return 0.17;
+  });
+}
+
+export function ignite() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 0.35, 1.5);
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.exponentialRampToValueAtTime(2200, t + 0.3);
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(0.7, t + 0.08);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    src.connect(f).connect(out);
+    src.start(t);
+    return 0.36;
+  });
+}
+
+export function spark() {
+  for (let i = 0; i < 4; i++)
+    setTimeout(
+      () =>
+        voice((c, out, t) => {
+          const src = noiseBurst(c, 0.03, 8);
+          const f = c.createBiquadFilter();
+          f.type = 'highpass';
+          f.frequency.value = 4000 + Math.random() * 3000;
+          out.gain.setValueAtTime(1.0, t);
+          src.connect(f).connect(out);
+          src.start(t);
+          return 0.04;
+        }),
+      i * 35 + Math.random() * 20,
+    );
+}
+
+export function launch() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 2.2, 0.6);
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(300, t);
+    f.frequency.exponentialRampToValueAtTime(1400, t + 0.4);
+    f.frequency.exponentialRampToValueAtTime(500, t + 2.2);
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(0.9, t + 0.15);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+    src.connect(f).connect(out);
+    src.start(t);
+    return 2.2;
+  });
+}
+
+export function puff() {
+  voice((c, out, t) => {
+    const src = noiseBurst(c, 0.2, 2);
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 700;
+    out.gain.setValueAtTime(0.6, t);
+    src.connect(f).connect(out);
+    src.start(t);
+    return 0.2;
+  });
+}
+
+export function meow() {
+  voice((c, out, t) => {
+    const o = c.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(520, t);
+    o.frequency.linearRampToValueAtTime(780, t + 0.18);
+    o.frequency.linearRampToValueAtTime(460, t + 0.5);
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 4;
+    f.frequency.setValueAtTime(900, t);
+    f.frequency.linearRampToValueAtTime(1800, t + 0.15);
+    f.frequency.linearRampToValueAtTime(800, t + 0.5);
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(0.5, t + 0.06);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    o.connect(f).connect(out);
+    o.start(t);
+    o.stop(t + 0.56);
+    return 0.56;
   });
 }

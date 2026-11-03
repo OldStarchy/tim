@@ -131,3 +131,93 @@ describe('gadgets', () => {
     expect(sim.insts.get('w')!.main.getPosition().x).toBeLessThan(22);
   });
 });
+
+describe('fire and light', () => {
+  const C = (x: number, id: string, lit = false) => P('candle', x, 23.95, { id, flip: lit });
+
+  it('a lit candle lights the candle next to it, but not one across the room', () => {
+    const { sim } = run({ parts: [floor(), C(20, 'a', true), C(20.65, 'b'), C(25, 'c')], ropes: [] }, 1);
+    expect(sim.insts.get('b')!.st.lit).toBe(true);
+    expect(sim.insts.get('c')!.st.lit).toBeFalsy();
+  });
+
+  it('a magnifying glass focuses a candle onto another candle', () => {
+    const { sim } = run({ parts: [floor(), C(16, 'src', true), P('lens', 19, 22.75, { id: 'L' }), C(22, 'tgt')], ropes: [] }, 2.5);
+    expect(sim.insts.get('tgt')!.st.lit).toBe(true);
+  });
+
+  it('a light bulb only shines when it is powered', () => {
+    const scene = (belts: Scene['belts']): Scene => ({
+      parts: [floor(), P('motor', 10, 23.85, { id: 'm' }), P('bulb', 16, 22.6, { id: 'bu' }), P('lens', 19, 22.35), P('wall', 22, 23.8, { length: 2 }), P('candle', 22, 23.0, { id: 'tgt' })],
+      ropes: [],
+      belts,
+    });
+    expect(run(scene([]), 2.5).sim.insts.get('tgt')!.st.lit).toBeFalsy();
+    expect(run(scene([{ id: 'b', a: 'm', b: 'bu' }]), 2.5).sim.insts.get('tgt')!.st.lit).toBe(true);
+  });
+
+  it('flint sparks when struck hard, not when touched gently', () => {
+    const hard = run({ parts: [floor(), P('flint', 20, 24.25), C(21.3, 'tgt'), P('steelball', 20, 15)], ropes: [] }, 1.5);
+    expect(hard.events).toContain('spark');
+    expect(hard.sim.insts.get('tgt')!.st.lit).toBe(true);
+    const soft = run({ parts: [floor(), P('flint', 20, 24.25), C(21.3, 'tgt'), P('baseball', 20, 23.4)], ropes: [] }, 1.5);
+    expect(soft.sim.insts.get('tgt')!.st.lit).toBeFalsy();
+  });
+
+  it('a lit rocket flies up, and an unlit one stays put', () => {
+    const pad = (lit: boolean): Scene => ({
+      parts: [floor(), P('rocket', 20, 22.05, { id: 'r' }), P('wall', 20, 23.3, { length: 0.6 }), ...(lit ? [C(20.6, 'c', true)] : [])],
+      ropes: [],
+    });
+    expect(run(pad(false), 1).sim.insts.get('r')!.main.getPosition().y).toBeGreaterThan(21.5);
+    const lit = run(pad(true), 0.8);
+    expect(lit.events).toContain('launch');
+    expect(lit.sim.insts.get('r')!.main.getPosition().y).toBeLessThan(15);
+  });
+
+  it('a flame burns through a rope', () => {
+    const { sim, events } = run(
+      {
+        parts: [floor(), P('hook', 20, 10, { id: 'h' }), P('anvil', 20, 18, { id: 'a' }), P('wall', 19.75, 15.3, { length: 1 }), P('candle', 19.75, 14.65, { flip: true })],
+        ropes: [{ id: 'q', a: 'h', b: 'a' }],
+      },
+      2,
+    );
+    expect(events).toContain('burn');
+    expect(sim.insts.get('a')!.main.getPosition().y).toBeGreaterThan(23);
+  });
+
+  it('a fan blows a candle out', () => {
+    const { sim, events } = run({ parts: [floor(), P('fan', 15, 23.15), C(19, 'c', true)], ropes: [] }, 0.5);
+    expect(events).toContain('puff');
+    expect(sim.insts.get('c')!.st.lit).toBe(false);
+  });
+});
+
+describe('critters', () => {
+  it('a sleeping cat stays put and the mouse ignores it', () => {
+    const { x } = run({ parts: [floor(), P('cat', 10, 23.95, { id: 'cat' }), P('rodent', 20, 24.25, { id: 'm' })], ropes: [] }, 2);
+    expect(x('cat')).toBeCloseTo(10, 1);
+    expect(x('m')).toBeCloseTo(20, 1);
+  });
+
+  it('a woken cat chases the mouse, and the mouse runs away faster', () => {
+    const { x, events } = run({ parts: [floor(), P('cat', 10, 23.95, { id: 'cat' }), P('rodent', 16, 24.25, { id: 'm' }), P('baseball', 10, 18)], ropes: [] }, 2);
+    expect(events).toContain('meow');
+    expect(x('cat')).toBeGreaterThan(15);
+    expect(x('m') - x('cat')).toBeGreaterThan(6);
+  });
+
+  it('a wall stops the cat from spotting the mouse', () => {
+    const { sim } = run(
+      { parts: [floor(), P('cat', 10, 23.95, { id: 'cat' }), P('wall', 12.5, 23, { length: 3, angle: Math.PI / 2 }), P('rodent', 15, 24.25)], ropes: [] },
+      1.5,
+    );
+    expect(sim.insts.get('cat')!.st.awake).toBeFalsy();
+  });
+
+  it('a bell ringing nearby wakes the cat', () => {
+    const { sim } = run({ parts: [floor(), P('cat', 10, 23.95, { id: 'cat' }), P('bell', 14, 18), P('baseball', 14, 14)], ropes: [] }, 1.5);
+    expect(sim.insts.get('cat')!.st.awake).toBe(true);
+  });
+});

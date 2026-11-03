@@ -1,6 +1,7 @@
 import { Body, Box, Circle, Polygon, RevoluteJoint, Vec2 } from 'planck';
 import type { Part, PartType } from './model';
 import { MORE_PARTS } from './parts-more';
+import { FIRE_PARTS, registerParts } from './parts-fire';
 import {
   type PartDef,
   OUTLINE,
@@ -96,6 +97,8 @@ const balloon: PartDef = {
   radius: 0.55,
   bounds: () => ({ x0: -0.55, y0: -0.6, x1: 0.55, y1: 0.85 }),
   ropeAnchors: () => [{ x: 0, y: 0.72 }],
+  ignite: () => ({ x: 0, y: 0, r: 0.6 }),
+  onIgnite: (api, inst) => api.pop(inst),
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, true, { linearDamping: 2.5, angularDamping: 3 }));
     b.createFixture({
@@ -786,7 +789,9 @@ export const PART_DEFS: Record<PartType, PartDef> = {
   hook,
   pulley,
   ...MORE_PARTS,
+  ...FIRE_PARTS,
 };
+registerParts(PART_DEFS);
 
 /** bin layout: grouped by category, in this order */
 export const BIN_ORDER: PartType[] = [
@@ -822,11 +827,20 @@ export const BIN_ORDER: PartType[] = [
   'magnet',
   'bell',
   'tnt',
+  // fire & light
+  'candle',
+  'lens',
+  'bulb',
+  'flint',
+  'rocket',
   // power
   'motor',
   'mouse',
   'gear',
   'conveyor',
+  // critters
+  'cat',
+  'rodent',
 ];
 
 export function defaultPart(type: PartType, x: number, y: number, id: string): Part {

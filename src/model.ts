@@ -33,7 +33,14 @@ export type PartType =
   | 'conveyor'
   | 'motor'
   | 'mouse'
-  | 'gear';
+  | 'gear'
+  | 'candle'
+  | 'lens'
+  | 'bulb'
+  | 'flint'
+  | 'rocket'
+  | 'cat'
+  | 'rodent';
 
 export interface Part {
   id: string;
@@ -91,7 +98,8 @@ export type Goal =
   | { kind: 'popped'; target: string; label: string }
   | { kind: 'inZone'; target: string; zone: Zone; label: string }
   | { kind: 'toppled'; targets: string[]; label: string }
-  | { kind: 'rung'; target: string; label: string };
+  | { kind: 'rung'; target: string; label: string }
+  | { kind: 'lit'; target: string; label: string };
 
 export type Link = 'rope' | 'belt';
 export type Bin = Partial<Record<PartType | Link, number>>;

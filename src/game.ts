@@ -328,6 +328,34 @@ export class Game {
         this.particles.push({ x: e.x, y: e.y, vx: 0, vy: 0, life: 0.6, max: 0.6, color: '#ffd666', size: 1.2, ring: true });
       } else if (e.kind === 'squeak') {
         audio.squeak();
+      } else if (e.kind === 'ignite') {
+        audio.ignite();
+        this.burst(e.x, e.y, 8, 2.5, ['#ffb02e', '#fff3b0'], 0.4, 0.08);
+      } else if (e.kind === 'spark') {
+        audio.spark();
+        this.burst(e.x, e.y, 22, 9, ['#fff3b0', '#ffd666', '#ff9a2e'], 0.35, 0.07);
+      } else if (e.kind === 'launch') {
+        audio.launch();
+      } else if (e.kind === 'smoke') {
+        this.particles.push({
+          x: e.x,
+          y: e.y,
+          vx: e.vx + (Math.random() - 0.5) * 1.5,
+          vy: e.vy + (Math.random() - 0.5) * 1.5,
+          life: 0.9,
+          max: 0.9,
+          color: Math.random() < 0.3 ? '#ffb02e' : 'rgba(200,205,215,0.7)',
+          size: 0.22 + Math.random() * 0.15,
+          drift: true,
+        });
+      } else if (e.kind === 'puff') {
+        audio.puff();
+        this.burst(e.x, e.y, 6, 1.2, ['rgba(200,205,215,0.8)'], 0.8, 0.14);
+      } else if (e.kind === 'burn') {
+        audio.ignite();
+        this.burst(e.x, e.y, 10, 2, ['#ffb02e', '#5d5d66'], 0.6, 0.1);
+      } else if (e.kind === 'meow') {
+        audio.meow();
       }
     }
     if (this.level && !this.won) {
@@ -461,7 +489,10 @@ export class Game {
       p.life -= dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      if (!p.ring) p.vy += 12 * dt;
+      if (p.drift) {
+        p.vx *= 0.96;
+        p.vy = p.vy * 0.96 - 1.5 * dt;
+      } else if (!p.ring) p.vy += 12 * dt;
     }
     this.particles = this.particles.filter((p) => p.life > 0);
     this.draw();
@@ -1410,7 +1441,7 @@ export class Game {
     const has = (t: PartType | Link) => this.sandbox || (this.bin[t] ?? 0) > 0;
     // links live with the category they belong to
     const groups: { title: Category; types: (PartType | Link)[] }[] = (
-      ['Balls', 'Building', 'Contraptions', 'Power'] as Category[]
+      ['Balls', 'Building', 'Contraptions', 'Fire & Light', 'Power', 'Critters'] as Category[]
     ).map((title) => ({
       title,
       types: [
@@ -1618,7 +1649,7 @@ export class Game {
         <dt>Drag / right-click</dt><dd>Move a part / send it back to the bin</dd>
         <dt><kbd>Q</kbd> <kbd>E</kbd> or wheel</dt><dd>Rotate 15° (hold <kbd>Shift</kbd> for 5°) — or drag the blue knob</dd>
         <dt><kbd>−</kbd> <kbd>=</kbd></dt><dd>Shrink / grow walls, belts and trampolines — or drag the yellow knobs</dd>
-        <dt><kbd>F</kbd></dt><dd>Flip fans, motors, see-saws, mousetraps, ramps…</dd>
+        <dt><kbd>F</kbd></dt><dd>Flip fans, motors, see-saws, mousetraps, ramps, critters… (a flipped candle starts lit)</dd>
         <dt><kbd>R</kbd></dt><dd>Rope tool: click an attach point, (optionally a pulley), then another</dd>
         <dt><kbd>B</kbd></dt><dd>Drive belt tool: click two hubs (motor, gear, conveyor roller)</dd>
         <dt><kbd>N</kbd></dt><dd>Pin a loose part in place (Free Build)</dd>

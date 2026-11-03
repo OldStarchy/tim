@@ -37,7 +37,14 @@ export type SimEvent =
   | { kind: 'boom'; x: number; y: number }
   | { kind: 'shatter'; x: number; y: number; angle: number; length: number }
   | { kind: 'ring'; x: number; y: number }
-  | { kind: 'squeak'; x: number; y: number };
+  | { kind: 'squeak'; x: number; y: number }
+  | { kind: 'ignite'; x: number; y: number }
+  | { kind: 'spark'; x: number; y: number }
+  | { kind: 'launch'; x: number; y: number }
+  | { kind: 'smoke'; x: number; y: number; vx: number; vy: number }
+  | { kind: 'puff'; x: number; y: number }
+  | { kind: 'burn'; x: number; y: number }
+  | { kind: 'meow'; x: number; y: number };
 
 /** what part behaviours may do to the running simulation */
 export interface SimApi {
@@ -51,9 +58,18 @@ export interface SimApi {
   explode(x: number, y: number, radius: number, power: number, source: Inst): void;
   /** a power source switched on/off: recompute who's driven */
   powerChanged(): void;
+  /** a short-lived flame (sparks, explosions): lights anything flammable within r */
+  addHeat(x: number, y: number, r: number, seconds: number): void;
+  pop(inst: Inst): void;
 }
 
-export type Category = 'Balls' | 'Building' | 'Contraptions' | 'Power';
+export interface HeatSpot {
+  x: number;
+  y: number;
+  r: number;
+}
+
+export type Category = 'Balls' | 'Building' | 'Contraptions' | 'Fire & Light' | 'Power' | 'Critters';
 
 export interface PartDef {
   type: PartType;
@@ -76,6 +92,13 @@ export interface PartDef {
   ropeAnchors?: (p: Part) => { x: number; y: number }[];
   /** belt hubs, local to the part's placed pose (powered parts are fixed in place) */
   drives?: (p: Part) => { x: number; y: number; r: number }[];
+  /** flammable spot (local to the main body): a flame within r lights it */
+  ignite?: (p: Part) => { x: number; y: number; r: number };
+  onIgnite?: (api: SimApi, inst: Inst) => void;
+  /** flames this part is giving off right now (world space) */
+  heat?: (inst: Inst) => HeatSpot[];
+  /** light this part is giving off right now (world space), for magnifying glasses */
+  light?: (inst: Inst) => { x: number; y: number } | null;
   /** gears: pitch radius; two gears mesh when their pitch circles touch */
   gearR?: (p: Part) => number;
   /** power sources: angular speed produced right now (rad/s, + is clockwise) */

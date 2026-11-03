@@ -41,6 +41,8 @@ export interface Particle {
   color: string;
   size: number;
   ring?: boolean;
+  /** smoke: drifts up and slows instead of falling */
+  drift?: boolean;
 }
 
 export function drawBoard(g: CanvasRenderingContext2D) {
@@ -252,6 +254,11 @@ export function drawParticles(g: CanvasRenderingContext2D, ps: Particle[]) {
       g.lineWidth = 0.06;
       g.strokeStyle = p.color;
       g.stroke();
+    } else if (p.drift) {
+      g.fillStyle = p.color;
+      g.beginPath();
+      g.arc(p.x, p.y, p.size * (1.8 - a), 0, Math.PI * 2);
+      g.fill();
     } else {
       g.fillStyle = p.color;
       g.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);

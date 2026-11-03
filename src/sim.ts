@@ -32,6 +32,8 @@ export interface RopeInst {
   joint: Joint | null;
   length: number;
   cut: boolean;
+  /** seconds spent in a flame */
+  burn?: number;
 }
 
 export interface BeltInst {
@@ -122,6 +124,10 @@ export class Sim implements SimApi {
   private toCut: { x: number; y: number; r: number }[] = [];
   private blasts: { x: number; y: number; r: number; power: number; source: Inst }[] = [];
   private powerDirty = true;
+  /** short-lived flames: sparks, explosions */
+  private flashes: { x: number; y: number; r: number; until: number }[] = [];
+  /** every flame burning right now (for drawing/debugging too) */
+  heatSpots: { x: number; y: number; r: number }[] = [];
   private impactCooldown = new WeakMap<Body, number>();
 
   constructor(scene: Scene) {
@@ -343,6 +349,14 @@ export class Sim implements SimApi {
     return 0;
   }
 
+  addHeat(x: number, y: number, r: number, seconds: number) {
+    this.flashes.push({ x, y, r, until: this.time + seconds });
+  }
+
+  pop(inst: Inst) {
+    this.toPop.add(inst);
+  }
+
   explode(x: number, y: number, r: number, power: number, source: Inst) {
     this.blasts.push({ x, y, r, power, source });
   }
@@ -391,8 +405,9 @@ export class Sim implements SimApi {
     this.bumperHits.length = 0;
 
     for (const b of this.blasts.splice(0)) this.blast(b);
+    this.spreadFire();
     for (const c of this.toCut.splice(0)) this.cutNear(c.x, c.y, c.r);
-    for (const inst of this.toPop) this.pop(inst);
+    for (const inst of this.toPop) this.popNow(inst);
     this.toPop.clear();
     for (const inst of this.toRemove) this.destroy(inst);
     this.toRemove.clear();
@@ -402,6 +417,46 @@ export class Sim implements SimApi {
       if (inst.removed || !inst.main.isDynamic()) continue;
       const p = inst.main.getPosition();
       if (p.y > BOARD_H + 8 || p.y < -10 || p.x < -10 || p.x > BOARD_W + 10) this.destroy(inst);
+    }
+  }
+
+  /** flames light flammable things and burn through ropes */
+  private spreadFire() {
+    const spots: { x: number; y: number; r: number; src?: Inst }[] = [];
+    for (const inst of this.insts.values()) {
+      if (inst.removed) continue;
+      const h = PART_DEFS[inst.part.type].heat?.(inst);
+      if (h) for (const spot of h) spots.push({ ...spot, src: inst });
+    }
+    this.flashes = this.flashes.filter((f) => f.until > this.time);
+    spots.push(...this.flashes);
+    this.heatSpots = spots;
+    if (!spots.length) return;
+    for (const inst of this.insts.values()) {
+      if (inst.removed || inst.st.lit || inst.st.ignited) continue;
+      const def = PART_DEFS[inst.part.type];
+      if (!def.ignite || !def.onIgnite) continue;
+      const ig = def.ignite(inst.part);
+      const w = inst.main.getWorldPoint(Vec2(ig.x, ig.y));
+      if (!spots.some((h) => Math.hypot(h.x - w.x, h.y - w.y) <= h.r + ig.r)) continue;
+      inst.st.ignited = true;
+      def.onIgnite(this, inst);
+    }
+    // ropes smoulder for a moment, then burn through
+    for (const rope of this.ropes) {
+      if (rope.cut || rope.a.removed || rope.b.removed) continue;
+      const segs = ropeSegments(rope);
+      // a rocket doesn't burn through its own tow rope
+      const hot = spots.find(
+        (h) => h.src !== rope.a && h.src !== rope.b && segs.some(([a, b]) => segDist(Vec2(h.x, h.y), a, b) <= h.r + 0.05),
+      );
+      if (!hot) continue;
+      rope.burn = (rope.burn ?? 0) + DT;
+      if (rope.burn < 0.35) continue;
+      rope.cut = true;
+      if (rope.joint) this.world.destroyJoint(rope.joint);
+      rope.joint = null;
+      this.events.push({ kind: 'burn', x: hot.x, y: hot.y });
     }
   }
 
@@ -429,6 +484,7 @@ export class Sim implements SimApi {
       }
     }
     this.cutNear(x, y, 1.5);
+    this.addHeat(x, y, r * 0.5, 0.15);
     this.toRemove.add(source);
   }
 
@@ -452,6 +508,12 @@ export class Sim implements SimApi {
       if (inst.removed) continue;
       for (const b of inst.bodies) {
         if (!b.isDynamic()) continue;
+        if (inst.part.type === 'candle' && inst.st.lit && this.inFanStream(origin, ax, b.getWorldPoint(Vec2(0, -0.7)), b, fb)) {
+          inst.st.lit = false;
+          inst.st.ignited = false;
+          const w = b.getWorldPoint(Vec2(0, -0.7));
+          this.events.push({ kind: 'puff', x: w.x, y: w.y });
+        }
         const rel = Vec2.sub(b.getWorldCenter(), origin);
         const along = Vec2.dot(rel, ax);
         if (along < 0 || along > FAN_RANGE) continue;
@@ -465,6 +527,15 @@ export class Sim implements SimApi {
         b.applyForceToCenter(Vec2.mul(ax, FAN_STRENGTH * size * (0.35 + 0.65 * falloff)), true);
       }
     }
+  }
+
+  private inFanStream(origin: Vec2, ax: Vec2, p: Vec2, b: Body, fanBody: Body) {
+    const rel = Vec2.sub(p, origin);
+    const along = Vec2.dot(rel, ax);
+    if (along < 0 || along > FAN_RANGE) return false;
+    const spread = 0.5 + (FAN_HALF_H - 0.5) * (along / FAN_RANGE);
+    if (Math.abs(Vec2.cross(ax, rel)) > spread + 0.3) return false;
+    return !this.fanBlocked(origin, p, b, fanBody);
   }
 
   private fanBlocked(from: Vec2, to: Vec2, target: Body, fanBody: Body): boolean {
@@ -490,7 +561,7 @@ export class Sim implements SimApi {
     return Math.min(s, 2);
   }
 
-  private pop(inst: Inst) {
+  private popNow(inst: Inst) {
     if (inst.removed) return;
     const p = inst.main.getPosition();
     this.events.push({ kind: 'pop', x: p.x, y: p.y });
@@ -547,6 +618,10 @@ export class Sim implements SimApi {
         });
       case 'rung':
         return ((this.insts.get(g.target)?.st.rings as number) ?? 0) > 0;
+      case 'lit': {
+        const t = this.insts.get(g.target);
+        return !!t && !t.removed && (!!t.st.lit || ((t.st.burn as number) ?? 0) > 0);
+      }
     }
     return false;
   }

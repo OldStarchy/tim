@@ -2,6 +2,7 @@
 
 import { Box, Chain, Circle, Polygon, RevoluteJoint, Vec2 } from 'planck';
 import type { Part, PartType } from './model';
+import { wakeCat } from './parts-fire';
 import {
   type G,
   type Inst,
@@ -494,7 +495,7 @@ export const TNT_RADIUS = 6;
 const tnt: PartDef = {
   type: 'tnt',
   name: 'TNT',
-  desc: 'Goes off when something hits it hard (or another TNT explodes nearby). Blasts things away, pops balloons, breaks glass and cuts nearby ropes.',
+  desc: 'Goes off when something hits it hard, its fuse is lit, or another TNT explodes nearby. Blasts things away, pops balloons, breaks glass, cuts ropes and lights things.',
   category: 'Contraptions',
   dynamic: true,
   rotate: true,
@@ -502,6 +503,11 @@ const tnt: PartDef = {
   color: '#e8463c',
   bounds: () => ({ x0: -0.4, y0: -0.65, x1: 0.4, y1: 0.4 }),
   ropeAnchors: () => [{ x: 0, y: -0.4 }],
+  ignite: () => ({ x: 0.05, y: -0.62, r: 0.3 }),
+  onIgnite(_api, inst) {
+    // a lit fuse burns down for a moment first
+    if (inst.st.fuse === undefined) inst.st.fuse = 0.8;
+  },
   build(world, p, inst) {
     const b = world.createBody(bodyDef(p, true));
     b.createFixture({ shape: new Box(0.4, 0.4), density: 1.2, friction: 0.6, userData: tag(inst) });
@@ -633,6 +639,9 @@ const bell: PartDef = {
     inst.st.swing = Math.min(1, speed / 8);
     const p = inst.main.getPosition();
     api.emit({ kind: 'ring', x: p.x, y: p.y });
+    for (const o of api.insts.values()) {
+      if (o.part.type === 'cat' && !o.removed && Vec2.distance(o.main.getPosition(), p) < 12) wakeCat(api, o);
+    }
   },
   onStep(_api, inst, dt) {
     if (inst.st.swing) inst.st.swing = Math.max(0, inst.st.swing - dt * 0.8);
